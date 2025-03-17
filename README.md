@@ -3,22 +3,8 @@
 <p align="center">
 
   <h1 align="center">SplaTAM: Splat, Track & Map 3D Gaussians for Dense RGB-D SLAM</h1>
-  <h3 align="center">CVPR 2024</h3>
-  <p align="center">
-    <a href="https://nik-v9.github.io/"><strong>Nikhil Keetha</strong></a>
-    ·
-    <a href="https://jaykarhade.github.io/"><strong>Jay Karhade</strong></a>
-    ·
-    <a href="https://krrish94.github.io/"><strong>Krishna Murthy Jatavallabhula</strong></a>
-    ·
-    <a href="https://gengshan-y.github.io/"><strong>Gengshan Yang</strong></a>
-    ·
-    <a href="https://theairlab.org/team/sebastian/"><strong>Sebastian Scherer</strong></a>
-    <br>
-    <a href="https://www.cs.cmu.edu/~deva/"><strong>Deva Ramanan</strong></a>
-    ·
-    <a href="https://www.vision.rwth-aachen.de/person/216/"><strong>Jonathon Luiten</strong></a>
-  </p>
+  
+
   <h3 align="center"><a href="https://arxiv.org/pdf/2312.02126.pdf">Paper</a> | <a href="https://youtu.be/jWLI-OFp3qU">Video</a> | <a href="https://spla-tam.github.io/">Project Page</a></h3>
   <div align="center"></div>
 </p>
