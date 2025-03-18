@@ -2,10 +2,10 @@
 
 <p align="center">
 
-  <h1 align="center">SplaTAM: Splat, Track & Map 3D Gaussians for Dense RGB-D SLAM</h1>
+  <h1 align="center">Accelerating SplaTAM for Real-Time Dense RGB-D SLAM via Fast Feature-Based Tracking and Adaptive Resolution</h1>
   
 
-  <h3 align="center"><a href="https://arxiv.org/pdf/2312.02126.pdf">Paper</a> | <a href="https://youtu.be/jWLI-OFp3qU">Video</a> | <a href="https://spla-tam.github.io/">Project Page</a></h3>
+  <h3 align="center"><a href="https://arxiv.org/pdf/2312.02126.pdf">Baseline Paper</a> | <a href="https://youtu.be/jWLI-OFp3qU">Video</a> | <a href="https://spla-tam.github.io/">Baseline Project Page</a></h3>
   <div align="center"></div>
 </p>
 
