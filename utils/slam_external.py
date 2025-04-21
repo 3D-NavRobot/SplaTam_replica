@@ -20,7 +20,7 @@ import torch
 import torch.nn.functional as func
 from torch.autograd import Variable
 from math import exp
-
+# from utils.pruning_mlp import GaussianImportanceNet
 
 def build_rotation(q):
     norm = torch.sqrt(q[:, 0] * q[:, 0] + q[:, 1] * q[:, 1] + q[:, 2] * q[:, 2] + q[:, 3] * q[:, 3])
@@ -173,6 +173,29 @@ def prune_gaussians(params, variables, optimizer, iter, prune_dict):
                 remove_threshold = prune_dict['removal_opacity_threshold']
             # Remove Gaussians with low opacity
             to_remove = (torch.sigmoid(params['logit_opacities']) < remove_threshold).squeeze()
+
+            # #New to remove by Galane:
+            # # Lazy-load the MLP
+            # if not hasattr(prune_gaussians, "scorer"):
+            #     prune_gaussians.scorer = GaussianImportanceNet().cuda()
+            #     prune_gaussians.scorer.load_state_dict(torch.load("models/pruning_mlp.pt"))
+            #     prune_gaussians.scorer.eval()
+
+            # # Construct features for each Gaussian
+            # opacity = torch.sigmoid(params['logit_opacities']).squeeze()
+            # radius = torch.max(torch.exp(params['log_scales']), dim=1).values
+            # lifespan = variables['timestep'] if 'timestep' in variables else torch.zeros_like(opacity)
+            # rel_radius = radius / variables['scene_radius']
+
+            # features = torch.stack([opacity, radius, lifespan, rel_radius], dim=1)
+
+            # # Predict importance scores
+            # with torch.no_grad():
+            #     scores = prune_gaussians.scorer(features).squeeze()
+
+            # # Use learned threshold (e.g., 0.2)
+            # to_remove = (scores < prune_dict['learned_threshold'])
+
             # Remove Gaussians that are too big
             if iter >= prune_dict['remove_big_after']:
                 big_points_ws = torch.exp(params['log_scales']).max(dim=1).values > 0.1 * variables['scene_radius']

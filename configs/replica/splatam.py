@@ -38,7 +38,7 @@ config = dict(
     checkpoint_interval=100, # Checkpoint Interval
     use_wandb=True,
     wandb=dict(
-        entity="theairlab",
+        entity="lilinamoa-carnegie-mellon-university",
         project="SplaTAM",
         group=group_name,
         name=run_name,
@@ -69,13 +69,24 @@ config = dict(
             depth=1.0,
         ),
         lrs=dict(
-            means3D=0.0,
+            # means3D=0.0,
+            means3D=0.001,
             rgb_colors=0.0,
             unnorm_rotations=0.0,
             logit_opacities=0.0,
             log_scales=0.0,
             cam_unnorm_rots=0.0004,
             cam_trans=0.002,
+        ),
+            # Add this new section for final learning rates after decay
+        lrs_final=dict(
+            means3D=0.0001,  # Final learning rate (10% of initial)
+            rgb_colors=0.0,
+            unnorm_rotations=0.0,
+            logit_opacities=0.0,
+            log_scales=0.0,
+            cam_unnorm_rots=0.00004,  # 10% of initial
+            cam_trans=0.0002,  # 10% of initial
         ),
     ),
     mapping=dict(
@@ -90,7 +101,8 @@ config = dict(
             depth=1.0,
         ),
         lrs=dict(
-            means3D=0.0001,
+            means3D=0.001,
+            # means3D=0.0001,
             rgb_colors=0.0025,
             unnorm_rotations=0.001,
             logit_opacities=0.05,
@@ -98,6 +110,10 @@ config = dict(
             cam_unnorm_rots=0.0000,
             cam_trans=0.0000,
         ),
+
+        lrs_means3D_final= 0.0001,  # Final learning rate (10% of initial)
+        lr_delay_mult=1.0, # Learning Rate Delay Multiplier
+        
         prune_gaussians=True, # Prune Gaussians during Mapping
         pruning_dict=dict( # Needs to be updated based on the number of mapping iterations
             start_after=0,
