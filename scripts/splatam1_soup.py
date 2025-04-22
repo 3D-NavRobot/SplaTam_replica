@@ -36,8 +36,8 @@ from utils.slam_external import calc_ssim, build_rotation, prune_gaussians, dens
 
 from diff_gaussian_rasterization import GaussianRasterizer as Renderer
 
-# from scripts.feature_tracker_disk import track_pair
-from scripts.feature_tracker import track_pair
+from scripts.model_soup_feature_tracker import track_pair_soup, track_pair_soup_adaptive
+# from scripts.feature_tracker import track_pair
 
 
 def get_dataset(config_dict, basedir, sequence, **kwargs):
@@ -699,7 +699,7 @@ def rgbd_slam(config: dict):
             # 3‑a) Try a SuperPoint + LightGlue pose estimate
             bootstrap_ok = False
             if prev_rgb_bgr is not None and prev_depth_cpu is not None:
-                pose_feat, ninl = track_pair(
+                pose_feat, ninl = track_pair_soup(
                     prev_rgb_bgr,
                     prev_depth_cpu,
                     (color.permute(1,2,0)*255).byte().cpu().numpy(),

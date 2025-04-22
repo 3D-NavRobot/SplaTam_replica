@@ -165,3 +165,14 @@ cython_debug/
 #  and can be added to the global gitignore or merged into this file.  For a more nuclear
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
+
+LightGlue
+adaptive_lightGlue_splatam_30697369.err
+adaptive_lightGlue_splatam_30697369.out
+complete_splatam_large_run_30687358.out
+disk_ext_splatam_30692820.err
+disk_ext_splatam_30692820.out
+model_soup_splatam_30694373.err
+model_soup_splatam_30694373.out
+.run_batch_splatam.sh
+SplaTAM/scripts/splatam1.py
