@@ -259,10 +259,6 @@ def get_loss(params, curr_data, variables, iter_time_idx, loss_weights, use_sil_
 
     # RGB Rendering
     rendervar['means2D'].retain_grad()
-    # im, radius, _, = Renderer(raster_settings=curr_data['cam'])(**rendervar)
-    # cast everything to half precision
-    for k,v in rendervar.items():
-        rendervar[k] = v.half() if isinstance(v, torch.Tensor) else v
     im, radius, _, = Renderer(raster_settings=curr_data['cam'])(**rendervar)
     variables['means2D'] = rendervar['means2D']  # Gradient only accum from colour render for densification
 
@@ -738,20 +734,20 @@ def rgbd_slam(config: dict):
                             desc=f"Tracking Time Step: {time_idx}")
                 while True:
                     iter_start = time.time()
-                    with autocast():
-                        loss, variables, losses = get_loss(
-                            params, tracking_curr_data, variables,
-                            time_idx,
-                            config['tracking']['loss_weights'],
-                            config['tracking']['use_sil_for_loss'],
-                            config['tracking']['sil_thres'],
-                            config['tracking']['use_l1'],
-                            config['tracking']['ignore_outlier_depth_loss'],
-                            tracking=True,
-                            plot_dir=eval_dir,
-                            visualize_tracking_loss=config['tracking']['visualize_tracking_loss'],
-                            tracking_iteration=it
-                        )
+                    
+                    loss, variables, losses = get_loss(
+                        params, tracking_curr_data, variables,
+                        time_idx,
+                        config['tracking']['loss_weights'],
+                        config['tracking']['use_sil_for_loss'],
+                        config['tracking']['sil_thres'],
+                        config['tracking']['use_l1'],
+                        config['tracking']['ignore_outlier_depth_loss'],
+                        tracking=True,
+                        plot_dir=eval_dir,
+                        visualize_tracking_loss=config['tracking']['visualize_tracking_loss'],
+                        tracking_iteration=it
+                    )
 
                     if config['use_wandb']:
                         wandb_tracking_step = report_loss(losses, wandb_run,
@@ -903,8 +899,8 @@ def rgbd_slam(config: dict):
                 iter_data['adaptive_k'] = 0.2          # keep 20 % of hardest pixels
 
                 # Loss for current frame
-                with autocast():
-                    loss, variables, losses = get_loss(params, iter_data, variables, iter_time_idx, config['mapping']['loss_weights'],
+                
+                loss, variables, losses = get_loss(params, iter_data, variables, iter_time_idx, config['mapping']['loss_weights'],
                                                 config['mapping']['use_sil_for_loss'], config['mapping']['sil_thres'],
                                                 config['mapping']['use_l1'], config['mapping']['ignore_outlier_depth_loss'], mapping=True)
                 if config['use_wandb']:
