@@ -86,8 +86,10 @@ class AdaptivePruner:
         for name, ten in params.items():
             params[name] = ten[keep_idx]
         for name, ten in variables.items():
-            if ten.ndim == 1:
+            # variables loop (keep 1-D tensors)
+            if ten.ndim == 1 and ten.shape[0] == N:   # skip non-matching buffers
                 variables[name] = ten[keep_idx]
+        
         self.birth_iter = self.birth_iter[keep_idx]  # ► birthdays
 
         # --- book-keeping -------------------------------------------------
