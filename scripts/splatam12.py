@@ -620,7 +620,7 @@ def rgbd_slam(config: dict):
         decay_iters=8000,
         alpha=1.0, beta=0.5, gamma=0.2,
         ema_decay=0.9,
-        lr_dict=config["mapping"]["lrs"],
+        lrs=config["mapping"]["lrs"],
         device=device
     )
 
