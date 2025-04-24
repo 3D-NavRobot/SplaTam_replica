@@ -17,20 +17,20 @@ def extract(image_bgr):
     feats['image'] = img[None]    # shape (1,1,H,W)
     return feats
 
-def match(f0, f1):
-    # wrap each SP output into the LightGlue “image” dict
-    data0 = {
-      "keypoints":   f0["keypoints"][None],       # add batch dim
-      "descriptors": f0["descriptors"][None],
-      "image":       f0["image"],                 # already [1×1×H×W]
+def match(d0, d1):
+    data = {
+        "image0": {
+            "keypoints":   d0["keypoints"],      # shape [1×M×2]
+            "descriptors": d0["descriptors"],    # shape [1×M×D]
+            # you can omit “image” or supply image_size if you like
+        },
+        "image1": {
+            "keypoints":   d1["keypoints"],
+            "descriptors": d1["descriptors"],
+        }
     }
-    data1 = {
-      "keypoints":   f1["keypoints"][None],
-      "descriptors": f1["descriptors"][None],
-      "image":       f1["image"],
-    }
-    out = lg({"image0": data0, "image1": data1})
-    # out["matches0"] is [1×M], so drop the batch dim
+    out = lg(data)
+    # out["matches0"] is [1×M], so drop batch dim
     return out["matches0"][0].cpu()
 
 
