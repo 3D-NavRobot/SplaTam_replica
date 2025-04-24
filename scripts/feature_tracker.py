@@ -26,36 +26,43 @@ def match(f0, f1):
 
 def estimate_pose(kp0, kp1, depth0, intr):
     """
-    kp0, kp1 : torch.Tensor [K×2] on CUDA
-    depth0   : torch.Tensor [H×W] on CUDA
-    intr     : numpy (3×3)
+    kp0, kp1 : torch.Tensor [K×2] on CUDA or CPU
+    depth0   : torch.Tensor [H×W] or numpy.ndarray [H×W]
+    intr     : numpy.ndarray (3×3)
     """
     fx, fy = intr[0,0], intr[1,1]
     cx, cy = intr[0,2], intr[1,2]
 
-    # move depth to CPU once:
-    depth_cpu = depth0.cpu()
+    # get integer pixel coords as NumPy arrays
+    ys = kp0[:,1].long().cpu().numpy().astype(int)
+    xs = kp0[:,0].long().cpu().numpy().astype(int)
 
-    # also move indices to CPU ints
-    ys = kp0[:,1].long().cpu()
-    xs = kp0[:,0].long().cpu()
+    # pull depth into a NumPy array
+    if isinstance(depth0, np.ndarray):
+        depth_cpu = depth0
+    else:
+        depth_cpu = depth0.cpu().numpy()
 
-    # now safe to index + numpy()
-    z = depth_cpu[ys, xs].numpy()
+    # index into depth
+    z = depth_cpu[ys, xs].astype(np.float32)
 
-    # build 3D points in numpy
-    u = xs.numpy().astype(np.float32)
-    v = ys.numpy().astype(np.float32)
+    # reproject to 3D
+    u = xs.astype(np.float32)
+    v = ys.astype(np.float32)
     X = np.vstack([
-      (u - cx) * z / fx,
-      (v - cy) * z / fy,
-      z
+        (u - cx) * z / fx,
+        (v - cy) * z / fy,
+        z
     ]).T
 
-    # PnP RANSAC
+    # PnP + RANSAC
     succ, rvec, tvec, inliers = cv2.solvePnPRansac(
-      X, kp1.cpu().numpy().astype(np.float32), intr, None,
-      reprojectionError=3.0, iterationsCount=100
+        X,
+        kp1.cpu().numpy().astype(np.float32),
+        intr,
+        None,
+        reprojectionError=3.0,
+        iterationsCount=100
     )
     if not succ:
         return None, 0
@@ -66,6 +73,7 @@ def estimate_pose(kp0, kp1, depth0, intr):
     T[:3,3] = tvec[:,0]
 
     return torch.from_numpy(T).cuda(), int(len(inliers))
+
 
 def track_pair(rgb_ref, depth_ref, rgb_cur, intr):
     """
