@@ -37,7 +37,7 @@ from utils.slam_external import calc_ssim, build_rotation, prune_gaussians, dens
 from diff_gaussian_rasterization import GaussianRasterizer as Renderer
 
 from scripts.feature_tracker import track_pair
-from .adaptive_prune import AdaptivePruner
+from scripts.adaptive_prune import AdaptivePruner
 
 
 def get_dataset(config_dict, basedir, sequence, **kwargs):
