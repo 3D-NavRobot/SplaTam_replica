@@ -48,50 +48,49 @@ class AdaptivePruner:
             self.birth_iter = torch.zeros(N, dtype=torch.int32,
                                           device=self.device)
 
-        # --- compute screen-space radius (normalised 0–1) ------------------
+        # --- screen-space radius -----------------------------------------
         r2D = variables["max_2D_radius"].clone()
-        r2D = r2D / (r2D.max().clamp_min(1.))      # scale invariant
+        r2D = r2D / (r2D.max().clamp_min(1.))
 
-        # --- colour residual (normalised) ----------------------------------
+        # --- colour residual ---------------------------------------------
+        if loss_rgb.numel() != N:        # ► ensure correct length
+            loss_rgb = torch.zeros(N, device=self.device)
         c_res = loss_rgb.detach()
-        if c_res.numel() == 0:                      # no vis pixels this iter
+        if c_res.numel() == 0:
             c_res = torch.zeros_like(r2D)
-        # update running mean so different scenes stay comparable
         self.ema_c = self.ema_decay * self.ema_c + (1 - self.ema_decay) * (
             c_res.mean() if (c_res > 0).any() else self.ema_c)
         c_res = c_res / (self.ema_c + 1e-6)
 
-        # --- lifetime term -------------------------------------------------
+        # --- lifetime -----------------------------------------------------
         life = (self.iter - self.birth_iter).float()
         life = life / (life.max().clamp_min(1.))
 
-        # --- composite score ----------------------------------------------
+        # --- composite score ---------------------------------------------
         score = (self.alpha * r2D +
                  self.beta  * c_res +
                  self.gamma * life)
-
-        # unseen gaussians slowly become “old” → pruned later anyway
         score[~seen_mask] += 0.25
 
-        # keep only k lowest score
-        keep_ratio = max(self.kmin,
-                         self.k0 * torch.exp(-self.iter / self.T))
-        k = max(int(keep_ratio * N), int(self.kmin * N))
-        keep_idx = torch.topk(-score, k).indices     # negative → lowest
+        # --- adaptive keep-ratio -----------------------------------------
+        iter_tensor = torch.tensor(float(self.iter), device=self.device)
+        keep_ratio = torch.maximum(
+            torch.tensor(self.kmin, device=self.device),
+            self.k0 * torch.exp(-iter_tensor / self.T)
+        ).item()
+        k = max(int(keep_ratio * N), 1)
+        k = min(k, N)
+        keep_idx = torch.topk(-score, k).indices     # lowest scores kept
 
-        # --- prune tensors -------------------------------------------------
-        for kname, tensor in params.items():
-            params[kname] = tensor[keep_idx]
+        # --- prune tensors -----------------------------------------------
+        for name, ten in params.items():
+            params[name] = ten[keep_idx]
+        for name, ten in variables.items():
+            if ten.ndim == 1:
+                variables[name] = ten[keep_idx]
+        self.birth_iter = self.birth_iter[keep_idx]  # ► birthdays
 
-        for vname, tensor in variables.items():
-            if tensor.ndim == 1:
-                variables[vname] = tensor[keep_idx]
-
-        # update birth dates (remove dead, add new)
-        self.birth_iter = self.birth_iter[keep_idx]
-
-        # book-keeping
+        # --- book-keeping -------------------------------------------------
         self.iter += 1
         self.ema_r = self.ema_decay * self.ema_r + (1 - self.ema_decay) * r2D.mean()
-
         return params, variables
