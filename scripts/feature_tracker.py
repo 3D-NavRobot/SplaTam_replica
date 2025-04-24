@@ -18,16 +18,21 @@ def extract(image_bgr):
     return feats
 
 def match(f0, f1):
-    data = {
-      'image0':       f0['image'],
-      'image1':       f1['image'],
-      'keypoints0':   f0['keypoints'],
-      'keypoints1':   f1['keypoints'],
-      'descriptors0': f0['descriptors'],
-      'descriptors1': f1['descriptors'],
+    # wrap each SP output into the LightGlue “image” dict
+    data0 = {
+      "keypoints":   f0["keypoints"][None],       # add batch dim
+      "descriptors": f0["descriptors"][None],
+      "image":       f0["image"],                 # already [1×1×H×W]
     }
-    out = lg(data)
-    return out['matches0'].cpu()
+    data1 = {
+      "keypoints":   f1["keypoints"][None],
+      "descriptors": f1["descriptors"][None],
+      "image":       f1["image"],
+    }
+    out = lg({"image0": data0, "image1": data1})
+    # out["matches0"] is [1×M], so drop the batch dim
+    return out["matches0"][0].cpu()
+
 
 def estimate_pose(kp0, kp1, depth0, intr):
     fx, fy, cx, cy = intr[0,0], intr[1,1], intr[0,2], intr[1,2]
