@@ -38,23 +38,35 @@ from diff_gaussian_rasterization import GaussianRasterizer as Renderer
 
 from scripts.feature_tracker import track_pair
 
-def adaptive_prune_gaussians(params, variables, prune_ratio):
+def adaptive_prune_gaussians(params, variables, prune_frac, lr_dict, tracking):
     """
-    Prune the bottom prune_ratio fraction of *Gaussians*, ranked by
-    variables['max_2D_radius'] (smaller => less important).
-    Only the per-Gaussian params get masked; camera params stay as-is.
+    Prune the bottom prune_frac of Gaussians by importance and rebuild the optimizer.
+    - params: dict of nn.Parameters, including per-Gaussian and camera params.
+    - variables: dict of buffers with per-Gaussian entries.
+    - prune_frac: float in [0,1), fraction of Gaussians to drop.
+    - lr_dict: dict mapping param names -> learning rates.
+    - tracking: bool, whether to build a tracking‐phase or mapping‐phase optimizer.
+    Returns (params, variables, optimizer).
     """
-    radii = variables['max_2D_radius']
-    N = radii.shape[0]
-    k = int(prune_ratio * N)
-    if k <= 0:
-        return params, variables
+    # 1) Number of Gaussians:
+    N = params['means3D'].shape[0]
+    K = int((1.0 - prune_frac) * N)
+    if K <= 1 or K >= N:
+        # nothing to do
+        return params, variables, initialize_optimizer(params, lr_dict, tracking)
 
-    # find threshold: the k-th smallest radius
-    threshold = torch.kthvalue(radii, k).values
-    keep = radii > threshold   # boolean mask length N
+    # 2) Compute importance scores (here: sigmoid(opacity) as proxy)
+    with torch.no_grad():
+        opac = torch.sigmoid(params['logit_opacities']).view(-1)  # [N]
+        # Alternative: use gradient accumulation variable: 
+        # scores = variables['means2D_gradient_accum'] / (variables['denom'] + 1e-12)
+        scores = opac
 
-    # list exactly the keys that are per-Gaussian:
+        # select top-K Gaussians
+        _, idx_topk = torch.topk(scores, K, largest=True)
+        idx_topk, _ = torch.sort(idx_topk)  # keep in ascending order
+
+    # 3) Keys of per-Gaussian params to prune
     gaussian_keys = [
         'means3D',
         'rgb_colors',
@@ -62,18 +74,21 @@ def adaptive_prune_gaussians(params, variables, prune_ratio):
         'logit_opacities',
         'log_scales',
     ]
+    # 4) Slice each per-Gaussian parameter
+    for k in gaussian_keys:
+        p = params[k].data
+        # p is [N, ...], slice first dim
+        new_p = p[idx_topk].clone()
+        params[k] = torch.nn.Parameter(new_p.requires_grad_(True))
 
-    # prune each Gaussian-param
-    for key in gaussian_keys:
-        v = params[key]
-        params[key] = torch.nn.Parameter(v[keep].clone().requires_grad_(True))
+    # 5) Slice your variables buffers
+    var_keys = ['max_2D_radius', 'means2D_gradient_accum', 'denom', 'timestep']
+    for k in var_keys:
+        variables[k] = variables[k][idx_topk].clone()
 
-    # prune our “variables” that track per-Gaussian stats:
-    for key in ['max_2D_radius', 'means2D_gradient_accum', 'denom', 'timestep']:
-        variables[key] = variables[key][keep].clone()
-
-    return params, variables
-
+    # 6) Rebuild optimizer to pick up new tensors
+    optimizer = initialize_optimizer(params, lr_dict, tracking)
+    return params, variables, optimizer
 
 
 def get_dataset(config_dict, basedir, sequence, **kwargs):
@@ -937,8 +952,12 @@ def rgbd_slam(config: dict):
                     if config['mapping']['prune_gaussians']:
                         params, variables = prune_gaussians(params, variables, optimizer, iter, config['mapping']['pruning_dict'])
                         if config['mapping'].get('adaptive_prune', True):
-                            params, variables = adaptive_prune_gaussians(
-                                params, variables, 0.20
+                            params, variables, optimizer = adaptive_prune_gaussians(
+                                params,
+                                variables,
+                                prune_frac=0.20,
+                                lr_dict=config['mapping']['lrs'],
+                                tracking=False
                             )
                         if config['use_wandb']:
                             wandb_run.log({"Mapping/Number of Gaussians - Pruning": params['means3D'].shape[0],
