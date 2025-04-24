@@ -938,22 +938,23 @@ def rgbd_slam(config: dict):
                         # params, variables = prune_gaussians(params, variables, optimizer, iter, config['mapping']['pruning_dict'])
                         # assume params and time_idx are in scope, and floor is X–Z
                         # 1) robot’s current 3D translation:
-                        curr_tran = params['cam_trans'][..., time_idx].detach()       # tensor([x,y,z])
-                        start_pt = curr_tran[[0,2]].cpu().numpy()                    # = (x,z)
+                        # (a) squeeze out the first degenerate dimension and then index:
+                        curr_tran = params['cam_trans'][..., time_idx].squeeze()  # -> shape (3,)
+                        start_pt = curr_tran[[0, 2]].cpu().numpy()               # -> array([x, z])
 
                         # 2) extract all Gaussian centers in the same plane:
-                        means3D = params['means3D'].detach().cpu().numpy()           # shape (N,3)
-                        means2d = means3D[:, [0,2]]                                  # shape (N,2)
+                        means3D = params['means3D'].detach().cpu().numpy()         # (N,3)
+                        means2d = means3D[:, [0, 2]]                                # (N,2)
 
-                        # 3) find the index of the one farthest from start_pt:
-                        dists = np.linalg.norm(means2d - start_pt[None,:], axis=1)
-                        goal_idx = np.argmax(dists)
-                        goal_pt = means2d[goal_idx]                                  # this is at “the other end” 
+                        # 3) pick the “other end” as the farthest center:
+                        dists    = np.linalg.norm(means2d - start_pt[None, :], axis=1)
+                        goal_idx = dists.argmax()
+                        goal_pt  = means2d[goal_idx]                                # (x, z)
 
-                        # 4) plan path
+                        # 4) plan the A* path:
                         path_indices = plan_path_astar(means2d, start_pt, goal_pt, k=8)
 
-                        # 5) prune off-path Gaussians
+                        # 5) prune Gaussians off the path:
                         params, variables = prune_by_path(params, variables, path_indices, buffer=0.2)
 
 
