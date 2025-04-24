@@ -478,7 +478,6 @@ def convert_params_to_store(params):
     return params_to_store
 
 
-from torch.cuda.amp import autocast, GradScaler
 
 def rgbd_slam(config: dict):
     # Print Config
@@ -510,7 +509,6 @@ def rgbd_slam(config: dict):
 
     # Get Device
     device = torch.device(config["primary_device"])
-    scaler = GradScaler()
 
     # Load Dataset
     print("Loading Dataset ...")
@@ -761,9 +759,10 @@ def rgbd_slam(config: dict):
                                                           tracking=True)
 
                     # backward + step
-                    scaler.scale(loss).backward()
-                    scaler.step(optimizer)
-                    scaler.update()
+                    # Backprop
+                    loss.backward()
+                    # Optimizer Update
+                    optimizer.step()
                     optimizer.zero_grad(set_to_none=True)
 
                     # keep best
@@ -912,8 +911,7 @@ def rgbd_slam(config: dict):
                     # Report Loss
                     wandb_mapping_step = report_loss(losses, wandb_run, wandb_mapping_step, mapping=True)
                 # Backprop
-                # loss.backward()
-                scaler.scale(loss).backward()
+                loss.backward()
                 
                 with torch.no_grad():
                     # Prune Gaussians
@@ -929,10 +927,7 @@ def rgbd_slam(config: dict):
                             wandb_run.log({"Mapping/Number of Gaussians - Densification": params['means3D'].shape[0],
                                            "Mapping/step": wandb_mapping_step})
                     # Optimizer Update
-                    # optimizer.step()
-                    # optimizer.zero_grad(set_to_none=True)
-                    scaler.step(optimizer)
-                    scaler.update()
+                    optimizer.step()
                     optimizer.zero_grad(set_to_none=True)
                     # Report Progress
                     if config['report_iter_progress']:
