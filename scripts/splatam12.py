@@ -431,9 +431,12 @@ def add_new_gaussians(params, variables, curr_data, sil_thres,
         # Get the new pointcloud in the world frame
         curr_cam_rot = torch.nn.functional.normalize(params['cam_unnorm_rots'][time_idx].detach(), dim=-1)
         curr_cam_tran = params['cam_trans'][time_idx].detach()
-        curr_w2c = torch.eye(4).cuda().float()
-        curr_w2c[:3, :3] = build_rotation(curr_cam_rot)
-        curr_w2c[:3, 3] = curr_cam_tran
+        # curr_w2c = torch.eye(4).cuda().float()
+        # curr_w2c[:3, :3] = build_rotation(curr_cam_rot)
+        rot_mat = build_rotation(curr_cam_rot.unsqueeze(0))[0]
+        curr_w2c = torch.eye(4, device='cuda', dtype=torch.float32)
+        curr_w2c[:3, :3] = rot_mat
+        # curr_w2c[:3, :3] = build_rotation(curr_cam_rot.unsqueeze(0))[0]
         valid_depth_mask = (curr_data['depth'][0, :, :] > 0)
         non_presence_mask = non_presence_mask & valid_depth_mask.reshape(-1)
         new_pt_cld, mean3_sq_dist = get_pointcloud(curr_data['im'], curr_data['depth'], curr_data['intrinsics'], 
@@ -657,9 +660,12 @@ def rgbd_slam(config: dict):
                 # Get the estimated rotation & translation
                 curr_cam_rot = F.normalize(params['cam_unnorm_rots'][time_idx].detach(), dim=-1)
                 curr_cam_tran = params['cam_trans'][time_idx].detach()
-                curr_w2c = torch.eye(4).cuda().float()
-                curr_w2c[:3, :3] = build_rotation(curr_cam_rot)
-                curr_w2c[:3, 3] = curr_cam_tran
+                # curr_w2c = torch.eye(4).cuda().float()
+                # curr_w2c[:3, :3] = build_rotation(curr_cam_rot)
+                rot_mat = build_rotation(curr_cam_rot.unsqueeze(0))[0]
+                curr_w2c = torch.eye(4, device='cuda', dtype=torch.float32)
+                curr_w2c[:3, :3] = rot_mat
+                # curr_w2c[:3, 3] = curr_cam_tran
                 # Initialize Keyframe Info
                 color = color.permute(2, 0, 1) / 255
                 depth = depth.permute(2, 0, 1)
@@ -836,9 +842,12 @@ def rgbd_slam(config: dict):
                 # Get the current estimated rotation & translation
                 curr_cam_rot = F.normalize(params['cam_unnorm_rots'][time_idx].detach(), dim=-1)
                 curr_cam_tran = params['cam_trans'][time_idx].detach()
-                curr_w2c = torch.eye(4).cuda().float()
-                curr_w2c[:3, :3] = build_rotation(curr_cam_rot)
-                curr_w2c[:3, 3] = curr_cam_tran
+                # curr_w2c = torch.eye(4).cuda().float()
+                # curr_w2c[:3, :3] = build_rotation(curr_cam_rot)
+                rot_mat = build_rotation(curr_cam_rot.unsqueeze(0))[0]
+                curr_w2c = torch.eye(4, device='cuda', dtype=torch.float32)
+                curr_w2c[:3, :3] = rot_mat
+                # curr_w2c[:3, 3] = curr_cam_tran
                 # Select Keyframes for Mapping
                 num_keyframes = config['mapping_window_size']-2
                 selected_keyframes = keyframe_selection_overlap(depth, curr_w2c, intrinsics, keyframe_list[:-1], num_keyframes)
@@ -968,9 +977,12 @@ def rgbd_slam(config: dict):
                 # Get the current estimated rotation & translation
                 curr_cam_rot = F.normalize(params['cam_unnorm_rots'][time_idx].detach(), dim=-1)
                 curr_cam_tran = params['cam_trans'][time_idx].detach()
-                curr_w2c = torch.eye(4).cuda().float()
-                curr_w2c[:3, :3] = build_rotation(curr_cam_rot)
-                curr_w2c[:3, 3] = curr_cam_tran
+                # curr_w2c = torch.eye(4).cuda().float()
+                # curr_w2c[:3, :3] = build_rotation(curr_cam_rot)
+                rot_mat = build_rotation(curr_cam_rot.unsqueeze(0))[0]
+                curr_w2c = torch.eye(4, device='cuda', dtype=torch.float32)
+                curr_w2c[:3, :3] = rot_mat
+                # curr_w2c[:3, 3] = curr_cam_tran
                 # Initialize Keyframe Info
                 curr_keyframe = {'id': time_idx, 'est_w2c': curr_w2c, 'color': color, 'depth': depth}
                 # Add to keyframe list
