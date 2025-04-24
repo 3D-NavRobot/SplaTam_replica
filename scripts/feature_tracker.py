@@ -25,25 +25,47 @@ def match(f0, f1):
     return m.cpu().numpy()       # turn into a numpy array
 
 def estimate_pose(kp0, kp1, depth0, intr):
-    # kp0/kp1: [K×2] float
+    """
+    kp0, kp1 : torch.Tensor [K×2] on CUDA
+    depth0   : torch.Tensor [H×W] on CUDA
+    intr     : numpy (3×3)
+    """
     fx, fy = intr[0,0], intr[1,1]
     cx, cy = intr[0,2], intr[1,2]
-    z = depth0[kp0[:,1].long(), kp0[:,0].long()].cpu().numpy()
+
+    # move depth to CPU once:
+    depth_cpu = depth0.cpu()
+
+    # also move indices to CPU ints
+    ys = kp0[:,1].long().cpu()
+    xs = kp0[:,0].long().cpu()
+
+    # now safe to index + numpy()
+    z = depth_cpu[ys, xs].numpy()
+
+    # build 3D points in numpy
+    u = xs.numpy().astype(np.float32)
+    v = ys.numpy().astype(np.float32)
     X = np.vstack([
-      (kp0[:,0].cpu().numpy() - cx) * z / fx,
-      (kp0[:,1].cpu().numpy() - cy) * z / fy,
+      (u - cx) * z / fx,
+      (v - cy) * z / fy,
       z
     ]).T
+
+    # PnP RANSAC
     succ, rvec, tvec, inliers = cv2.solvePnPRansac(
-      X, kp1.cpu().numpy(), intr, None,
+      X, kp1.cpu().numpy().astype(np.float32), intr, None,
       reprojectionError=3.0, iterationsCount=100
     )
     if not succ:
         return None, 0
+
     R, _ = cv2.Rodrigues(rvec)
     T = np.eye(4, dtype=np.float32)
-    T[:3,:3], T[:3,3] = R, tvec[:,0]
-    return torch.from_numpy(T).cuda(), len(inliers)
+    T[:3,:3] = R
+    T[:3,3] = tvec[:,0]
+
+    return torch.from_numpy(T).cuda(), int(len(inliers))
 
 def track_pair(rgb_ref, depth_ref, rgb_cur, intr):
     """
