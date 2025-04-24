@@ -37,7 +37,43 @@ from utils.slam_external import calc_ssim, build_rotation, prune_gaussians, dens
 from diff_gaussian_rasterization import GaussianRasterizer as Renderer
 
 from scripts.feature_tracker import track_pair
-from scripts.adaptive_prune import AdaptivePruner
+
+def adaptive_prune_gaussians(params, variables, prune_ratio):
+    """
+    Prune the bottom prune_ratio fraction of *Gaussians*, ranked by
+    variables['max_2D_radius'] (smaller => less important).
+    Only the per-Gaussian params get masked; camera params stay as-is.
+    """
+    radii = variables['max_2D_radius']
+    N = radii.shape[0]
+    k = int(prune_ratio * N)
+    if k <= 0:
+        return params, variables
+
+    # find threshold: the k-th smallest radius
+    threshold = torch.kthvalue(radii, k).values
+    keep = radii > threshold   # boolean mask length N
+
+    # list exactly the keys that are per-Gaussian:
+    gaussian_keys = [
+        'means3D',
+        'rgb_colors',
+        'unnorm_rotations',
+        'logit_opacities',
+        'log_scales',
+    ]
+
+    # prune each Gaussian-param
+    for key in gaussian_keys:
+        v = params[key]
+        params[key] = torch.nn.Parameter(v[keep].clone().requires_grad_(True))
+
+    # prune our “variables” that track per-Gaussian stats:
+    for key in ['max_2D_radius', 'means2D_gradient_accum', 'denom', 'timestep']:
+        variables[key] = variables[key][keep].clone()
+
+    return params, variables
+
 
 
 def get_dataset(config_dict, basedir, sequence, **kwargs):
@@ -614,17 +650,6 @@ def rgbd_slam(config: dict):
     mapping_frame_time_sum = 0
     mapping_frame_time_count = 0
 
-    pruner = AdaptivePruner(
-        keep_ratio_start=0.6,
-        keep_ratio_min=0.15,
-        decay_iters=8000,
-        alpha=1.0, beta=0.5, gamma=0.2,
-        ema_decay=0.9,
-        lrs=config["mapping"]["lrs"],
-        device=device
-    )
-
-
     # Load Checkpoint
     if config['load_checkpoint']:
         checkpoint_time_idx = config['checkpoint_time_idx']
@@ -910,14 +935,11 @@ def rgbd_slam(config: dict):
                 with torch.no_grad():
                     # Prune Gaussians
                     if config['mapping']['prune_gaussians']:
-                        # params, variables = prune_gaussians(params, variables, optimizer, iter, config['mapping']['pruning_dict'])
-                        # loss_rgb_per_gauss is already accumulated in get_loss:
-                        rgb_res = variables["means2D_gradient_accum"].clone()
-                        seen    = variables["seen"]
-                        params, variables, optimizer = pruner(
-                            params, variables, rgb_res, seen, optimizer
-                        )
-        
+                        params, variables = prune_gaussians(params, variables, optimizer, iter, config['mapping']['pruning_dict'])
+                        if config['mapping'].get('adaptive_prune', True):
+                            params, variables = adaptive_prune_gaussians(
+                                params, variables, 0.20
+                            )
                         if config['use_wandb']:
                             wandb_run.log({"Mapping/Number of Gaussians - Pruning": params['means3D'].shape[0],
                                            "Mapping/step": wandb_mapping_step})
