@@ -92,6 +92,9 @@ def prune_by_path(params, variables, path_indices, buffer=0.2):
     Keep only Gaussians whose 2D-center is within `buffer` meters
     of any node on the planned path.
     """
+    if len(path_indices)==0:
+        print(f"Warning: A* returned empty path; skipping prune at frame {time_idx}")
+        return params, variables
     means3D = params['means3D'].detach().cpu().numpy()
     means2d = means3D[:,:2]
     path_pts = means2d[path_indices]
