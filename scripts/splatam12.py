@@ -36,7 +36,6 @@ from utils.slam_external import calc_ssim, build_rotation, prune_gaussians, dens
 
 from diff_gaussian_rasterization import GaussianRasterizer as Renderer
 
-from scripts.feature_tracker import track_pair
 
 def adaptive_prune_gaussians(params, variables, prune_frac, lr_dict, tracking):
     """
@@ -266,9 +265,8 @@ def initialize_first_timestep(dataset, num_frames, scene_radius_depth_ratio,
 
 
 def get_loss(params, curr_data, variables, iter_time_idx, loss_weights, use_sil_for_loss,
-             sil_thres, use_l1, ignore_outlier_depth_loss, tracking=False,
-             mapping=False, do_ba=False, plot_dir=None, visualize_tracking_loss=False,
-             tracking_iteration=None):
+             sil_thres, use_l1, ignore_outlier_depth_loss, tracking=False, 
+             mapping=False, do_ba=False, plot_dir=None, visualize_tracking_loss=False, tracking_iteration=None):
     # Initialize Loss Dictionary
     losses = {}
 
@@ -333,15 +331,6 @@ def get_loss(params, curr_data, variables, iter_time_idx, loss_weights, use_sil_
             losses['depth'] = torch.abs(curr_data['depth'] - depth)[mask].sum()
         else:
             losses['depth'] = torch.abs(curr_data['depth'] - depth)[mask].mean()
-
-    # ------------- ADAPTIVE PIXEL SUB‑SAMPLING ----------------
-    # If caller set 'adaptive' we keep only top‑k% highest‑error pixels
-    if curr_data.get('adaptive', False) and mask.sum() > 0:
-        k = curr_data.get('adaptive_k', 0.2)        # default 20 %
-        per_pix_err = torch.abs(curr_data['depth'] - depth)[mask]
-        thresh = torch.quantile(per_pix_err, 1 - k)
-        mask = mask & (torch.abs(curr_data['depth'] - depth) >= thresh)
-    # -----------------------------------------------------------
     
     # RGB Loss
     if tracking and (use_sil_for_loss or ignore_outlier_depth_loss):
@@ -738,35 +727,8 @@ def rgbd_slam(config: dict):
             params = initialize_camera_pose(params, time_idx, forward_prop=config['tracking']['forward_prop'])
 
         # Tracking
-        # -------------------- FAST FEATURE BOOTSTRAP --------------------
-
-        prev_rgb_bgr   = None      # will store H×W×3 uint8
-        prev_depth_cpu = None      # will store H×W float32 (metres)
-
-
         tracking_start_time = time.time()
         if time_idx > 0 and not config['tracking']['use_gt_poses']:
-
-            # 3‑a) Try a SuperPoint + LightGlue pose estimate
-            bootstrap_ok = False
-            if prev_rgb_bgr is not None and prev_depth_cpu is not None:
-                pose_feat, ninl = track_pair(
-                    prev_rgb_bgr,
-                    prev_depth_cpu,
-                    (color.permute(1,2,0)*255).byte().cpu().numpy(),
-                    intrinsics.cpu().numpy()
-                )
-                if pose_feat is not None and ninl > 50:      # robust match
-                    with torch.no_grad():
-                        params['cam_unnorm_rots'][..., time_idx] = \
-                            matrix_to_quaternion(pose_feat[:3,:3][None])
-                        params['cam_trans'][..., time_idx]       = pose_feat[:3,3]
-                    # we need far fewer Adam steps now
-                    num_iters_tracking = max(5, config['tracking']['num_iters']//4)
-                    bootstrap_ok = True
-            # ----------------------------------------------------------------
-            
-            # ------- Adam fine‑tuning (original code, unchanged below) ------
             # Reset Optimizer & Learning Rates for tracking
             optimizer = initialize_optimizer(params, config['tracking']['lrs'], tracking=True)
             # Keep Track of Best Candidate Rotation & Translation
@@ -934,10 +896,6 @@ def rgbd_slam(config: dict):
                 iter_gt_w2c = gt_w2c_all_frames[:iter_time_idx+1]
                 iter_data = {'cam': cam, 'im': iter_color, 'depth': iter_depth, 'id': iter_time_idx, 
                              'intrinsics': intrinsics, 'w2c': first_frame_w2c, 'iter_gt_w2c_list': iter_gt_w2c}
-                
-                iter_data['adaptive']   = True
-                iter_data['adaptive_k'] = 0.2          # keep 20 % of hardest pixels
-
                 # Loss for current frame
                 loss, variables, losses = get_loss(params, iter_data, variables, iter_time_idx, config['mapping']['loss_weights'],
                                                 config['mapping']['use_sil_for_loss'], config['mapping']['sil_thres'],
@@ -950,15 +908,14 @@ def rgbd_slam(config: dict):
                 with torch.no_grad():
                     # Prune Gaussians
                     if config['mapping']['prune_gaussians']:
-                        params, variables = prune_gaussians(params, variables, optimizer, iter, config['mapping']['pruning_dict'])
-                        if config['mapping'].get('adaptive_prune', True):
-                            params, variables, optimizer = adaptive_prune_gaussians(
-                                params,
-                                variables,
-                                prune_frac=0.20,
-                                lr_dict=config['mapping']['lrs'],
-                                tracking=False
-                            )
+                        # params, variables = prune_gaussians(params, variables, optimizer, iter, config['mapping']['pruning_dict'])
+                        params, variables, optimizer = adaptive_prune_gaussians(
+                            params,
+                            variables,
+                            prune_frac=0.20,
+                            lr_dict=config['mapping']['lrs'],
+                            tracking=False
+                        )
                         if config['use_wandb']:
                             wandb_run.log({"Mapping/Number of Gaussians - Pruning": params['means3D'].shape[0],
                                            "Mapping/step": wandb_mapping_step})
@@ -1036,11 +993,6 @@ def rgbd_slam(config: dict):
         # Increment WandB Time Step
         if config['use_wandb']:
             wandb_time_step += 1
-
-        # Cache the current frame for next time:
-        prev_rgb_bgr   = (color.permute(1,2,0)*255).byte().cpu().numpy()
-        prev_depth_cpu = depth[0].cpu().numpy()
-
 
         torch.cuda.empty_cache()
 
