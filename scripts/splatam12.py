@@ -142,8 +142,12 @@ def initialize_params(init_pt_cld, num_frames, mean3_sq_dist, gaussian_distribut
     }
 
     # camera pose trajectory
-    cam_rots = np.tile([1,0,0,0], (1,1,num_frames))
-    cam_trans = np.zeros((1,3,num_frames))
+    # cam_rots = np.tile([1,0,0,0], (1,1,num_frames))
+    # cam_trans = np.zeros((1,3,num_frames))
+    # make one (num_frames × 4) array of identity quaternions
+    cam_rots  = np.tile(np.array([1,0,0,0])[None, :], (num_frames, 1))   # shape: (num_frames, 4)
+    cam_trans = np.zeros((num_frames, 3))                                # shape: (num_frames, 3)
+
     params['cam_unnorm_rots'] = cam_rots
     params['cam_trans']       = cam_trans
 
