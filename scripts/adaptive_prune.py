@@ -82,15 +82,19 @@ class AdaptivePruner:
         k = min(k, N)
         keep_idx = torch.topk(-score, k).indices     # lowest scores kept
 
-        # --- prune tensors -----------------------------------------------
-        for name, ten in params.items():
-            params[name] = ten[keep_idx]
-        for name, ten in variables.items():
-            # variables loop (keep 1-D tensors)
-            if ten.ndim == 1 and ten.shape[0] == N:   # skip non-matching buffers
+        # --- prune per-Gaussian params & vars --------------------------------
+        for name, ten in list(params.items()):
+            # only prune if the first dim matches #Gaussians
+            if isinstance(ten, torch.Tensor) and ten.shape[0] == N:
+                params[name] = ten[keep_idx]
+
+        for name, ten in list(variables.items()):
+            # only prune 1-D buffers whose length == #Gaussians
+            if isinstance(ten, torch.Tensor) and ten.ndim == 1 and ten.shape[0] == N:
                 variables[name] = ten[keep_idx]
-        
-        self.birth_iter = self.birth_iter[keep_idx]  # ► birthdays
+
+        # now births
+        self.birth_iter = self.birth_iter[keep_idx]
 
         # --- book-keeping -------------------------------------------------
         self.iter += 1
