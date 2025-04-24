@@ -910,7 +910,13 @@ def rgbd_slam(config: dict):
                         # loss_rgb_per_gauss is already accumulated in get_loss:
                         loss_rgb_gauss = variables["means2D_gradient_accum"].clone()
                         seen = variables["seen"]
-                        params, variables = pruner(params, variables, loss_rgb_gauss, seen)
+                        params, variables, optim_invalid = pruner(params, variables, loss_rgb_gauss, seen)
+
+                        if optim_invalid:                   # re-create Adam with current params
+                            optimizer = torch.optim.Adam(
+                                [{'params': [v], 'lr': config["mapping"]["lrs"][k]}
+                                for k, v in params.items()])
+        
                         if config['use_wandb']:
                             wandb_run.log({"Mapping/Number of Gaussians - Pruning": params['means3D'].shape[0],
                                            "Mapping/step": wandb_mapping_step})

@@ -93,4 +93,4 @@ class AdaptivePruner:
         # --- book-keeping -------------------------------------------------
         self.iter += 1
         self.ema_r = self.ema_decay * self.ema_r + (1 - self.ema_decay) * r2D.mean()
-        return params, variables
+        return params, variables, True
