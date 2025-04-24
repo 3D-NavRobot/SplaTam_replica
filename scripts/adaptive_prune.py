@@ -1,12 +1,12 @@
-# utils/adaptive_prune.py
 import torch
 from torch.optim import Adam
 
 class AdaptivePruner:
     """
-    CPU-backed, safe on-the-fly Gaussian pruning.
-    Moves only the per-Gaussian buffers to CPU for indexing,
-    then brings them back to GPU, and rebuilds Adam.
+    Safe on-the-fly Gaussian pruning:
+      • CPU-index per-gaussian tensors to catch OOB early.
+      • Only touches tensors whose .shape[0]==N.
+      • Rebuilds Adam with fresh param groups.
     """
     def __init__(
         self,
@@ -18,7 +18,7 @@ class AdaptivePruner:
         beta:  float,
         gamma: float,
         ema_decay: float,
-        lrs: dict,           # mapping from param-name to lr
+        lrs: dict,           # map param_name→lr
         device="cuda",
     ):
         self.k0, self.kmin, self.T = keep_ratio_start, keep_ratio_min, decay_iters
@@ -30,70 +30,69 @@ class AdaptivePruner:
         self.iter = 0
         self.ema_r = torch.tensor(1.0, device=device)
         self.ema_c = torch.tensor(0.1, device=device)
-        self.birth_iter = None
+        self.birth = None
 
-    def __call__(self, params, variables, loss_rgb, seen_mask, optimizer):
+    def __call__(self, params, variables, loss_rgb, seen, optimizer):
         N = params["means3D"].shape[0]
-        if self.birth_iter is None:
-            self.birth_iter = torch.zeros(N, dtype=torch.int32, device=self.device)
+        # init birth times
+        if self.birth is None:
+            self.birth = torch.zeros(N, dtype=torch.int32, device=self.device)
 
-        # 1) screen‐space radius
+        # 1) screen radius
         r2D = variables["max_2D_radius"].clone()
         r2D = r2D / r2D.max().clamp_min(1.0)
 
-        # 2) colour residual
-        if loss_rgb.numel() != N:
-            loss_rgb = torch.zeros(N, device=self.device)
-        c = loss_rgb.detach()
-        self.ema_c = self.ema_decay * self.ema_c + (1 - self.ema_decay) * (c.mean() if c.numel()>0 else self.ema_c)
-        c_res = c / (self.ema_c + 1e-6)
+        # 2) color residual
+        rgb = loss_rgb.detach() if loss_rgb.numel()==N else torch.zeros(N, device=self.device)
+        self.ema_c = (self.ema_decay*self.ema_c +
+                      (1-self.ema_decay)*rgb.mean().clamp_min(self.ema_c))
+        c_res = rgb / (self.ema_c + 1e-6)
 
         # 3) age
-        age = (self.iter - self.birth_iter).float()
+        age = (self.iter - self.birth).float()
         age = age / age.max().clamp_min(1.0)
 
         # composite score
         score = self.alpha*r2D + self.beta*c_res + self.gamma*age
-        score[~seen_mask] += 0.25
+        score[~seen] += 0.25
 
-        # decide how many to keep
-        it = torch.tensor(float(self.iter), device=self.device)
-        kr = torch.maximum(
-            torch.tensor(self.kmin, device=self.device),
-            self.k0 * torch.exp(-it/self.T)
-        ).item()
-        k = max(min(int(kr * N), N), 1)
-        keep_idx = torch.topk(-score, k).indices
+        # determine keep-count
+        t = torch.tensor(float(self.iter), device=self.device)
+        kr = max(self.kmin, self.k0*torch.exp(-t/self.T).item())
+        k = min(max(int(kr * N), 1), N)
 
-        # --- do all indexing on CPU to catch bad indices early ---
-        keep_cpu = keep_idx.cpu()
+        # get keep indices
+        keep = torch.topk(-score, k).indices
+        keep_cpu = keep.cpu()  # <-- CPU index to catch any OOB
 
-        # prune params
+        # slice params
         new_params = {}
-        for name, p in params.items():
-            if isinstance(p, torch.nn.Parameter) and p.shape[0] == N:
-                cpu_tensor = p.detach().cpu()
-                sliced = cpu_tensor[keep_cpu]
-                new_params[name] = torch.nn.Parameter(sliced.to(self.device).clone().requires_grad_(True))
+        for name,p in params.items():
+            if isinstance(p, torch.nn.Parameter) and p.shape[0]==N:
+                cpu = p.detach().cpu()
+                sliced = cpu[keep_cpu]
+                new_params[name] = torch.nn.Parameter(
+                    sliced.to(self.device).clone().requires_grad_(True)
+                )
             else:
                 new_params[name] = p
         params.clear(); params.update(new_params)
 
-        # prune variables
-        for name, v in list(variables.items()):
+        # slice variables
+        for name,v in list(variables.items()):
             if isinstance(v, torch.Tensor) and v.ndim==1 and v.shape[0]==N:
-                cpu_v = v.detach().cpu()
-                variables[name] = cpu_v[keep_cpu].to(self.device)
-            # else leave it alone
+                cpu = v.detach().cpu()
+                variables[name] = cpu[keep_cpu].to(self.device)
+            # else: leave alone
 
-        # prune birth records
-        self.birth_iter = self.birth_iter[keep_idx]
+        # update birth times
+        self.birth = self.birth[keep]
 
         # rebuild optimizer
         groups = []
-        for name, p in params.items():
-            lr = self.lrs.get(name, 0.0)
-            groups.append({'params':[p], 'lr':lr, 'name':name})
+        for nm,p in params.items():
+            lr = self.lrs.get(nm, 0.0)
+            groups.append({'params':[p], 'lr':lr, 'name':nm})
         optimizer = Adam(groups)
 
         # bookkeeping
