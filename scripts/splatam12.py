@@ -30,7 +30,7 @@ from utils.keyframe_selection import keyframe_selection_overlap
 from utils.recon_helpers import setup_camera
 from utils.slam_helpers import (
     transformed_params2rendervar, transformed_params2depthplussilhouette,
-    transform_to_frame, l1_loss_v1, matrix_to_quaternion
+    transform_to_frame12, l1_loss_v1, matrix_to_quaternion
 )
 from utils.slam_external import calc_ssim, build_rotation, prune_gaussians, densify
 
@@ -232,23 +232,23 @@ def get_loss(params, curr_data, variables, iter_time_idx, loss_weights, use_sil_
 
     if tracking:
         # Get current frame Gaussians, where only the camera pose gets gradient
-        transformed_gaussians = transform_to_frame(params, iter_time_idx, 
+        transformed_gaussians = transform_to_frame12(params, iter_time_idx, 
                                              gaussians_grad=False,
                                              camera_grad=True)
     elif mapping:
         if do_ba:
             # Get current frame Gaussians, where both camera pose and Gaussians get gradient
-            transformed_gaussians = transform_to_frame(params, iter_time_idx,
+            transformed_gaussians = transform_to_frame12(params, iter_time_idx,
                                                  gaussians_grad=True,
                                                  camera_grad=True)
         else:
             # Get current frame Gaussians, where only the Gaussians get gradient
-            transformed_gaussians = transform_to_frame(params, iter_time_idx,
+            transformed_gaussians = transform_to_frame12(params, iter_time_idx,
                                                  gaussians_grad=True,
                                                  camera_grad=False)
     else:
         # Get current frame Gaussians, where only the Gaussians get gradient
-        transformed_gaussians = transform_to_frame(params, iter_time_idx,
+        transformed_gaussians = transform_to_frame12(params, iter_time_idx,
                                              gaussians_grad=True,
                                              camera_grad=False)
 
@@ -410,7 +410,7 @@ def initialize_new_params(new_pt_cld, mean3_sq_dist, gaussian_distribution):
 def add_new_gaussians(params, variables, curr_data, sil_thres, 
                       time_idx, mean_sq_dist_method, gaussian_distribution):
     # Silhouette Rendering
-    transformed_gaussians = transform_to_frame(params, time_idx, gaussians_grad=False, camera_grad=False)
+    transformed_gaussians = transform_to_frame12(params, time_idx, gaussians_grad=False, camera_grad=False)
     depth_sil_rendervar = transformed_params2depthplussilhouette(params, curr_data['w2c'],
                                                                  transformed_gaussians)
     depth_sil, _, _, = Renderer(raster_settings=curr_data['cam'])(**depth_sil_rendervar)
