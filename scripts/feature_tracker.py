@@ -96,4 +96,6 @@ def track_pair(rgb_ref, depth_ref, rgb_cur, intr):
     kp0 = kp0_all[valid]
     kp1 = kp1_all[m[valid]]
 
-    return estimate_pose(kp0, kp1, depth_ref[0], intr)
+    pose, n = estimate_pose(kp0, kp1, depth_ref, intr)
+
+    return pose, n
