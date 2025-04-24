@@ -1,65 +1,69 @@
 import torch, cv2, kornia as K
-from lightglue import LightGlue, SuperPoint
 import numpy as np
+from lightglue import LightGlue, SuperPoint
 
 sp = SuperPoint(max_keypoints=2048).eval().cuda()
 lg = LightGlue(features='superpoint').eval().cuda()
 
 @torch.no_grad()
 def extract(image_bgr):
-    # convert to grayscale and normalize
-    img = K.color.bgr_to_grayscale(
-        torch.tensor(image_bgr).permute(2,0,1)/255.
-    ).cuda()
-    # run SuperPoint
-    feats = sp({'image': img[None]})
-    # stash the image so we can pass it to LightGlue
-    feats['image'] = img[None]    # shape (1,1,H,W)
+    # image_bgr: H×W×3 uint8
+    img = torch.tensor(image_bgr, device='cuda').permute(2,0,1).float() / 255.0  # 3×H×W
+    gray = K.color.bgr_to_grayscale(img[None])[0]  # 1×H×W
+    feats = sp({'image': gray[None]})
+    feats['image'] = gray[None]  # so LightGlue can look up image_size if needed
     return feats
 
-def match(d0, d1):
+def match(f0, f1):
     data = {
-        "image0": {
-            "keypoints":   d0["keypoints"],      # shape [1×M×2]
-            "descriptors": d0["descriptors"],    # shape [1×M×D]
-            # you can omit “image” or supply image_size if you like
-        },
-        "image1": {
-            "keypoints":   d1["keypoints"],
-            "descriptors": d1["descriptors"],
-        }
+      'image0': {'keypoints': f0['keypoints'], 'descriptors': f0['descriptors']},
+      'image1': {'keypoints': f1['keypoints'], 'descriptors': f1['descriptors']},
     }
     out = lg(data)
-    # out["matches0"] is [1×M], so drop batch dim
-    return out["matches0"][0].cpu()
-
+    # matches0: [1×M], batch is always 1 here.
+    m = out['matches0'][0]       # now a 1‐D tensor of length M
+    return m.cpu().numpy()       # turn into a numpy array
 
 def estimate_pose(kp0, kp1, depth0, intr):
-    fx, fy, cx, cy = intr[0,0], intr[1,1], intr[0,2], intr[1,2]
-    z = depth0[kp0[:,1].long(), kp0[:,0].long()]
+    # kp0/kp1: [K×2] float
+    fx, fy = intr[0,0], intr[1,1]
+    cx, cy = intr[0,2], intr[1,2]
+    z = depth0[kp0[:,1].long(), kp0[:,0].long()].cpu().numpy()
     X = np.vstack([
-      (kp0[:,0]-cx)*z/fx,
-      (kp0[:,1]-cy)*z/fy,
+      (kp0[:,0].cpu().numpy() - cx) * z / fx,
+      (kp0[:,1].cpu().numpy() - cy) * z / fy,
       z
     ]).T
-    succ, rvec, tvec, inl = cv2.solvePnPRansac(
-      X, kp1.float().numpy(), intr, None,
+    succ, rvec, tvec, inliers = cv2.solvePnPRansac(
+      X, kp1.cpu().numpy(), intr, None,
       reprojectionError=3.0, iterationsCount=100
     )
     if not succ:
-      return None, 0
-    R,_ = cv2.Rodrigues(rvec)
-    T = np.eye(4); T[:3,:3]=R; T[:3,3]=tvec[:,0]
-    return torch.tensor(T).float().cuda(), len(inl)
+        return None, 0
+    R, _ = cv2.Rodrigues(rvec)
+    T = np.eye(4, dtype=np.float32)
+    T[:3,:3], T[:3,3] = R, tvec[:,0]
+    return torch.from_numpy(T).cuda(), len(inliers)
 
 def track_pair(rgb_ref, depth_ref, rgb_cur, intr):
+    """
+    rgb_ref, rgb_cur: H×W×3 uint8
+    depth_ref: 1×H×W float32
+    intr: 3×3 numpy float
+    """
     f0 = extract(rgb_ref)
     f1 = extract(rgb_cur)
-    m  = match(f0, f1)
-    valid = m > -1
+
+    m = match(f0, f1)          # numpy array length M of ints in [-1..M-1]
+    valid = (m >= 0)
     if valid.sum() < 12:
-      return None, 0
-    kp0 = f0['keypoints'][valid]
-    kp1 = f1['keypoints'][m[valid]]
-    pose, n = estimate_pose(kp0, kp1, depth_ref[0], intr)
-    return pose, n
+        return None, 0
+
+    # drop batch dim from keypoints → [M×2]
+    kp0_all = f0['keypoints'][0]
+    kp1_all = f1['keypoints'][0]
+
+    kp0 = kp0_all[valid]
+    kp1 = kp1_all[m[valid]]
+
+    return estimate_pose(kp0, kp1, depth_ref[0], intr)
