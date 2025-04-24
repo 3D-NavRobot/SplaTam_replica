@@ -1,9 +1,12 @@
-# utils/adaptive_prune.py  (NEW FILE)
+# utils/adaptive_prune.py
 import torch
+from torch.optim import Adam
 
 class AdaptivePruner:
     """
     Adaptive Gaussian pruning that trades quality for speed on-the-fly.
+    - Only prunes tensors whose first dimension == #Gaussians
+    - Safely rebuilds Adam to match the new params
     """
     def __init__(
         self,
@@ -15,88 +18,87 @@ class AdaptivePruner:
         beta:  float = 0.5,      # weight for colour residual
         gamma: float = 0.2,      # weight for lifetime
         ema_decay: float = 0.9,
+        lr_dict: dict,           # mapping param-name → lr for Adam
         device="cuda",
     ):
-        self.k0   = keep_ratio_start
-        self.kmin = keep_ratio_min
-        self.T    = decay_iters
+        self.k0, self.kmin, self.T = keep_ratio_start, keep_ratio_min, decay_iters
         self.alpha, self.beta, self.gamma = alpha, beta, gamma
         self.ema_decay = ema_decay
         self.device = device
+        self.lr_dict = lr_dict
 
         self.iter = 0
-        # running statistics
         self.ema_r = torch.tensor(1.0, device=device)
         self.ema_c = torch.tensor(0.1, device=device)
+        self.birth_iter = None    # to be init on first call
 
-        # each gaussian's 'birthday'
-        self.birth_iter = None    # initialised on first call
-
-    # ---------------------------------------------------------------------- #
-    def __call__(self, params, variables, loss_rgb, seen_mask):
+    def __call__(self, params, variables, loss_rgb, seen_mask, optimizer):
         """
-        Args
-        ----
-        params      : dict – optimisation parameters (will be shrunk in-place)
-        variables   : dict – helper tensors (will be shrunk in-place)
-        loss_rgb    : (N,) tensor – |render-gt| L1 per-gaussian (already
-                      accumulated in get_loss via means2D_gradient_accum)
-        seen_mask   : (N,) bool – gaussians visible in current frame
+        Args:
+            params   : dict of torch.nn.Parameter (each [N, …] or [1, …])
+            variables: dict of torch.Tensor helper buffers
+            loss_rgb : (N,) L1 error per Gaussian
+            seen_mask: (N,) bool mask of visible Gaussians
+            optimizer: existing Adam; will be replaced if pruning happens
+        Returns:
+            params, variables, optimizer
         """
+        # --- init birth iters ---
         N = params["means3D"].shape[0]
         if self.birth_iter is None:
-            self.birth_iter = torch.zeros(N, dtype=torch.int32,
-                                          device=self.device)
+            self.birth_iter = torch.zeros(N, dtype=torch.int32, device=self.device)
 
-        # --- screen-space radius -----------------------------------------
+        # --- score components ---
+        # 1) screen‐radius
         r2D = variables["max_2D_radius"].clone()
-        r2D = r2D / (r2D.max().clamp_min(1.))
+        r2D = r2D / r2D.max().clamp_min(1.0)
 
-        # --- colour residual ---------------------------------------------
-        if loss_rgb.numel() != N:        # ► ensure correct length
+        # 2) colour residual
+        if loss_rgb.numel() != N:
             loss_rgb = torch.zeros(N, device=self.device)
-        c_res = loss_rgb.detach()
-        if c_res.numel() == 0:
-            c_res = torch.zeros_like(r2D)
-        self.ema_c = self.ema_decay * self.ema_c + (1 - self.ema_decay) * (
-            c_res.mean() if (c_res > 0).any() else self.ema_c)
-        c_res = c_res / (self.ema_c + 1e-6)
+        c = loss_rgb.detach()
+        self.ema_c = self.ema_decay * self.ema_c + (1 - self.ema_decay) * (c.mean() if c.numel()>0 else self.ema_c)
+        c_res = c / (self.ema_c + 1e-6)
 
-        # --- lifetime -----------------------------------------------------
-        life = (self.iter - self.birth_iter).float()
-        life = life / (life.max().clamp_min(1.))
+        # 3) age
+        age = (self.iter - self.birth_iter).float()
+        age = age / age.max().clamp_min(1.0)
 
-        # --- composite score ---------------------------------------------
-        score = (self.alpha * r2D +
-                 self.beta  * c_res +
-                 self.gamma * life)
+        # composite
+        score = self.alpha*r2D + self.beta*c_res + self.gamma*age
         score[~seen_mask] += 0.25
 
-        # --- adaptive keep-ratio -----------------------------------------
-        iter_tensor = torch.tensor(float(self.iter), device=self.device)
-        keep_ratio = torch.maximum(
-            torch.tensor(self.kmin, device=self.device),
-            self.k0 * torch.exp(-iter_tensor / self.T)
-        ).item()
-        k = max(int(keep_ratio * N), 1)
-        k = min(k, N)
-        keep_idx = torch.topk(-score, k).indices     # lowest scores kept
+        # --- decide keep count k ---
+        it = torch.tensor(float(self.iter), device=self.device)
+        kr = torch.maximum(torch.tensor(self.kmin, device=self.device),
+                           self.k0 * torch.exp(-it/self.T)).item()
+        k = max(min(int(kr * N), N), 1)
 
-        # --- prune per-Gaussian params & vars --------------------------------
-        for name, ten in list(params.items()):
-            # only prune if the first dim matches #Gaussians
-            if isinstance(ten, torch.Tensor) and ten.shape[0] == N:
-                params[name] = ten[keep_idx]
+        keep_idx = torch.topk(-score, k).indices
 
-        for name, ten in list(variables.items()):
-            # only prune 1-D buffers whose length == #Gaussians
-            if isinstance(ten, torch.Tensor) and ten.ndim == 1 and ten.shape[0] == N:
-                variables[name] = ten[keep_idx]
+        # --- prune only per-Gaussian tensors in params & variables ---
+        # params: any Tensor whose first dim == N
+        for name, p in list(params.items()):
+            if isinstance(p, torch.nn.Parameter) and p.shape[0] == N:
+                params[name] = torch.nn.Parameter(p[keep_idx].detach().clone().requires_grad_(True))
 
-        # now births
+        # variables: any 1-D Tensor length N
+        for name, v in list(variables.items()):
+            if isinstance(v, torch.Tensor) and v.ndim==1 and v.shape[0]==N:
+                variables[name] = v[keep_idx].clone()
+
+        # prune birth record
         self.birth_iter = self.birth_iter[keep_idx]
 
-        # --- book-keeping -------------------------------------------------
+        # --- rebuild Adam with correct param-groups ---
+        new_groups = []
+        for name, p in params.items():
+            lr = self.lr_dict.get(name, 0.0)
+            new_groups.append({'params':[p], 'lr': lr, 'name': name})
+        optimizer = Adam(new_groups)
+
+        # --- bookkeeping ---
         self.iter += 1
         self.ema_r = self.ema_decay * self.ema_r + (1 - self.ema_decay) * r2D.mean()
-        return params, variables, True
+
+        return params, variables, optimizer

@@ -615,9 +615,13 @@ def rgbd_slam(config: dict):
     mapping_frame_time_count = 0
 
     pruner = AdaptivePruner(
-        keep_ratio_start=0.6,  # start by keeping 60 % of gaussians
-        keep_ratio_min=0.15,   # asymptotically keep at least 15 %
-        decay_iters=8000,      # ≈ total mapping iters in a Replica scene
+        keep_ratio_start=0.6,
+        keep_ratio_min=0.15,
+        decay_iters=8000,
+        alpha=1.0, beta=0.5, gamma=0.2,
+        ema_decay=0.9,
+        lr_dict=config["mapping"]["lrs"],
+        device=device
     )
 
 
@@ -908,14 +912,11 @@ def rgbd_slam(config: dict):
                     if config['mapping']['prune_gaussians']:
                         # params, variables = prune_gaussians(params, variables, optimizer, iter, config['mapping']['pruning_dict'])
                         # loss_rgb_per_gauss is already accumulated in get_loss:
-                        loss_rgb_gauss = variables["means2D_gradient_accum"].clone()
-                        seen = variables["seen"]
-                        params, variables, optim_invalid = pruner(params, variables, loss_rgb_gauss, seen)
-
-                        if optim_invalid:                   # re-create Adam with current params
-                            optimizer = torch.optim.Adam(
-                                [{'params': [v], 'lr': config["mapping"]["lrs"][k]}
-                                for k, v in params.items()])
+                        rgb_res = variables["means2D_gradient_accum"].clone()
+                        seen    = variables["seen"]
+                        params, variables, optimizer = pruner(
+                            params, variables, rgb_res, seen, optimizer
+                        )
         
                         if config['use_wandb']:
                             wandb_run.log({"Mapping/Number of Gaussians - Pruning": params['means3D'].shape[0],
