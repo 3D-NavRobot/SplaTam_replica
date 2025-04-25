@@ -294,11 +294,11 @@ def get_loss(params, curr_data, variables, iter_time_idx, loss_weights, use_sil_
 
     # ------------- ADAPTIVE PIXEL SUB‑SAMPLING ----------------
     # If caller set 'adaptive' we keep only top‑k% highest‑error pixels
-    if curr_data.get('adaptive', False) and mask.sum() > 0:
-        k = curr_data.get('adaptive_k', 0.2)        # default 20 %
-        per_pix_err = torch.abs(curr_data['depth'] - depth)[mask]
-        thresh = torch.quantile(per_pix_err, 1 - k)
-        mask = mask & (torch.abs(curr_data['depth'] - depth) >= thresh)
+    # if curr_data.get('adaptive', False) and mask.sum() > 0:
+    #     k = curr_data.get('adaptive_k', 0.2)        # default 20 %
+    #     per_pix_err = torch.abs(curr_data['depth'] - depth)[mask]
+    #     thresh = torch.quantile(per_pix_err, 1 - k)
+    #     mask = mask & (torch.abs(curr_data['depth'] - depth) >= thresh)
     # -----------------------------------------------------------
     
     # RGB Loss
@@ -726,6 +726,7 @@ def rgbd_slam(config: dict):
                     # far fewer Adam steps
                     # num_iters_tracking = max(20, config['tracking']['num_iters']//1)
                     num_iters_tracking = config['tracking']['num_iters']
+                    print("num_iters_tracking", num_iters_tracking)
                     bootstrap_ok = True
 
             # 2) Only run the Adam‐fine‐tune if bootstrap failed
@@ -900,12 +901,12 @@ def rgbd_slam(config: dict):
                 iter_data = {'cam': cam, 'im': iter_color, 'depth': iter_depth, 'id': iter_time_idx, 
                              'intrinsics': intrinsics, 'w2c': first_frame_w2c, 'iter_gt_w2c_list': iter_gt_w2c}
                 
-                iter_data['adaptive']   = True
-                iter_data['adaptive_k'] = 0.7  
+                # iter_data['adaptive']   = True
+                # iter_data['adaptive_k'] = 0.7  
                 
-                if iter > 0.75 * num_iters_mapping:
-                    iter_data['adaptive'] = False
-                    # keep 20 % of hardest pixels
+                # if iter > 0.75 * num_iters_mapping:
+                #     iter_data['adaptive'] = False
+                #     # keep 20 % of hardest pixels
 
                 # Loss for current frame
                 
