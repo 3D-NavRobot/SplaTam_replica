@@ -294,11 +294,11 @@ def get_loss(params, curr_data, variables, iter_time_idx, loss_weights, use_sil_
 
     # ------------- ADAPTIVE PIXEL SUB‑SAMPLING ----------------
     # If caller set 'adaptive' we keep only top‑k% highest‑error pixels
-    # if curr_data.get('adaptive', False) and mask.sum() > 0:
-    #     k = curr_data.get('adaptive_k', 0.2)        # default 20 %
-    #     per_pix_err = torch.abs(curr_data['depth'] - depth)[mask]
-    #     thresh = torch.quantile(per_pix_err, 1 - k)
-    #     mask = mask & (torch.abs(curr_data['depth'] - depth) >= thresh)
+    if curr_data.get('adaptive', False) and mask.sum() > 0:
+        k = curr_data.get('adaptive_k', 0.2)        # default 20 %
+        per_pix_err = torch.abs(curr_data['depth'] - depth)[mask]
+        thresh = torch.quantile(per_pix_err, 1 - k)
+        mask = mask & (torch.abs(curr_data['depth'] - depth) >= thresh)
     # -----------------------------------------------------------
     
     # RGB Loss
