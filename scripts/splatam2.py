@@ -727,7 +727,7 @@ def rgbd_slam(config: dict):
                     intrinsics.cpu().numpy()
                 )
                 print("========> ninl", ninl)
-                if pose_feat is not None and ninl > 600:
+                if pose_feat is not None and ninl > 1500:
                     
                     with torch.no_grad():
                         params['cam_unnorm_rots'][..., time_idx] = \
