@@ -735,7 +735,11 @@ def rgbd_slam(config: dict):
 
             # 2) Only run the Adam‐fine‐tune if bootstrap failed
             iter_start = time.time()
-            if not bootstrap_ok:
+            if bootstrap_ok:
+                # just count the bootstrap as one “iteration”
+                tracking_iter_time_sum  += time.time() - iter_start
+                tracking_iter_time_count += 1
+            else:
                 optimizer = initialize_optimizer(params, config['tracking']['lrs'], tracking=True)
                 candidate_cam_unnorm_rot = params['cam_unnorm_rots'][..., time_idx].detach().clone()
                 candidate_cam_tran       = params['cam_trans'][..., time_idx].detach().clone()
@@ -743,7 +747,8 @@ def rgbd_slam(config: dict):
                 it = 0
                 pbar = tqdm(range(num_iters_tracking),
                             desc=f"Tracking Time Step: {time_idx}")
-                while True:
+                # while True:
+                while it < num_iters_tracking:
                     # iter_start = time.time()
                     
                     loss, variables, losses = get_loss(
@@ -771,6 +776,15 @@ def rgbd_slam(config: dict):
                     # Optimizer Update
                     optimizer.step()
                     optimizer.zero_grad(set_to_none=True)
+                    
+
+                    # this is where you _did_ measure…
+                    tracking_iter_time_sum  += time.time() - iter_start
+                    tracking_iter_time_count += 1
+                    it += 1
+
+                    if it == num_iters_tracking:
+                        break
 
                     # keep best
                     with torch.no_grad():
@@ -790,12 +804,10 @@ def rgbd_slam(config: dict):
                         else:
                             pbar.update(1) 
 
-                    tracking_iter_time_sum  += time.time() - iter_start
-                    tracking_iter_time_count += 1
-                    it += 1
+                    # tracking_iter_time_sum  += time.time() - iter_start
+                    # tracking_iter_time_count += 1
+                    # it += 1
 
-                    if it == num_iters_tracking:
-                        break
 
                 pbar.close()
                 # restore best
