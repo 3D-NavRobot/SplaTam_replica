@@ -923,18 +923,10 @@ def rgbd_slam(config: dict):
                 iter_data = {'cam': cam, 'im': iter_color, 'depth': iter_depth, 'id': iter_time_idx, 
                              'intrinsics': intrinsics, 'w2c': first_frame_w2c, 'iter_gt_w2c_list': iter_gt_w2c}
                 
-                # iter_data['adaptive']   = True
-                # iter_data['adaptive_k'] = 0.7  
+                iter_data['adaptive']   = True
+                iter_data['adaptive_k'] = 0.7  
                 
-                # if iter > 0.75 * num_iters_mapping:
-                #     iter_data['adaptive'] = False
-                # early-mapping: keep capacity & image fidelity
-                if iter < 0.75 * num_iters_mapping:     # wait longer before pruning
-                    config['mapping']['prune_gaussians'] = False
-                    # # disable any adaptive subsampling as well
-                    iter_data['adaptive'] = False
-                else:
-                    config['mapping']['prune_gaussians'] = True
+                if iter > 0.75 * num_iters_mapping:
                     iter_data['adaptive'] = False
 
 
