@@ -717,13 +717,15 @@ def rgbd_slam(config: dict):
                     (color.permute(1,2,0)*255).byte().cpu().numpy(),
                     intrinsics.cpu().numpy()
                 )
-                if pose_feat is not None and ninl > 50:
+                ninl_thresh = 200  # require 200 good correspondences
+                if pose_feat is not None and ninl > ninl_thresh:
                     with torch.no_grad():
                         params['cam_unnorm_rots'][..., time_idx] = \
                             matrix_to_quaternion(pose_feat[:3,:3][None])
                         params['cam_trans'][..., time_idx]       = pose_feat[:3,3]
                     # far fewer Adam steps
-                    num_iters_tracking = max(20, config['tracking']['num_iters']//1)
+                    # num_iters_tracking = max(20, config['tracking']['num_iters']//1)
+                    num_iters_tracking = config['tracking']['num_iters']
                     bootstrap_ok = True
 
             # 2) Only run the Adam‐fine‐tune if bootstrap failed
