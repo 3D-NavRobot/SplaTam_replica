@@ -487,12 +487,6 @@ def rgbd_slam(config: dict):
         config['gaussian_distribution'] = "isotropic"
     print(f"{config}")
 
-    config['mapping']['num_iters'] = 15000
-    pd = config['mapping']['pruning_dict']
-    pd['soft_prune_ratio'] = 0.6
-    pd['hard_prune_ratio'] = 0.2
-    config['tracking']['num_iters'] = 10
-
     # Create Output Directories
     output_dir = os.path.join(config["workdir"], config["run_name"])
     eval_dir = os.path.join(output_dir, "eval")
@@ -726,7 +720,7 @@ def rgbd_slam(config: dict):
                             matrix_to_quaternion(pose_feat[:3,:3][None])
                         params['cam_trans'][..., time_idx]       = pose_feat[:3,3]
                     # far fewer Adam steps
-                    num_iters_tracking = max(5, config['tracking']['num_iters']//4)
+                    num_iters_tracking = max(20, config['tracking']['num_iters']//2)
                     bootstrap_ok = True
 
             # 2) Only run the Adam‐fine‐tune if bootstrap failed
@@ -902,7 +896,11 @@ def rgbd_slam(config: dict):
                              'intrinsics': intrinsics, 'w2c': first_frame_w2c, 'iter_gt_w2c_list': iter_gt_w2c}
                 
                 iter_data['adaptive']   = True
-                iter_data['adaptive_k'] = 0.2          # keep 20 % of hardest pixels
+                iter_data['adaptive_k'] = 0.7  
+                
+                if iter > 0.75 * num_iters_mapping:
+                    iter_data['adaptive'] = False
+                    # keep 20 % of hardest pixels
 
                 # Loss for current frame
                 
