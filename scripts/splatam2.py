@@ -720,7 +720,7 @@ def rgbd_slam(config: dict):
                             matrix_to_quaternion(pose_feat[:3,:3][None])
                         params['cam_trans'][..., time_idx]       = pose_feat[:3,3]
                     # far fewer Adam steps
-                    num_iters_tracking = max(20, config['tracking']['num_iters']//2)
+                    num_iters_tracking = max(20, config['tracking']['num_iters']//1)
                     bootstrap_ok = True
 
             # 2) Only run the Adam‐fine‐tune if bootstrap failed
