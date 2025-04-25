@@ -169,3 +169,7 @@ cython_debug/
 
 # Custom
 LightGlue
+
+~/SplaTam_replica/configs/replica/splatam_s.py
+~/SplaTam_replica/configs/replica/splatam.py
+~/SplaTam_replica/scripts/splatam_flashSlam.py

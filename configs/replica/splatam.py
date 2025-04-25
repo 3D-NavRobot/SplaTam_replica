@@ -7,6 +7,7 @@ scenes = ["room0", "room1", "room2",
 
 primary_device="cuda:0"
 seed = 0
+identify = "full_flashSlam"
 scene_name = scenes[0]
 
 map_every = 1
@@ -16,7 +17,7 @@ tracking_iters = 40
 mapping_iters = 60
 
 group_name = "Replica"
-run_name = f"{scene_name}_{seed}"
+run_name = f"{scene_name}_{seed}_{identify}"
 
 config = dict(
     workdir=f"./experiments/{group_name}",
