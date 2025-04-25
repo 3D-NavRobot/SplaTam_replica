@@ -724,6 +724,7 @@ def rgbd_slam(config: dict):
                     bootstrap_ok = True
 
             # 2) Only run the Adam‐fine‐tune if bootstrap failed
+            iter_start = time.time()
             if not bootstrap_ok:
                 optimizer = initialize_optimizer(params, config['tracking']['lrs'], tracking=True)
                 candidate_cam_unnorm_rot = params['cam_unnorm_rots'][..., time_idx].detach().clone()
@@ -733,7 +734,7 @@ def rgbd_slam(config: dict):
                 pbar = tqdm(range(num_iters_tracking),
                             desc=f"Tracking Time Step: {time_idx}")
                 while True:
-                    iter_start = time.time()
+                    # iter_start = time.time()
                     
                     loss, variables, losses = get_loss(
                         params, tracking_curr_data, variables,
@@ -895,18 +896,27 @@ def rgbd_slam(config: dict):
                 iter_data = {'cam': cam, 'im': iter_color, 'depth': iter_depth, 'id': iter_time_idx, 
                              'intrinsics': intrinsics, 'w2c': first_frame_w2c, 'iter_gt_w2c_list': iter_gt_w2c}
                 
-                iter_data['adaptive']   = True
-                iter_data['adaptive_k'] = 0.7  
+                # iter_data['adaptive']   = True
+                # iter_data['adaptive_k'] = 0.7  
                 
-                if iter > 0.75 * num_iters_mapping:
+                # if iter > 0.75 * num_iters_mapping:
+                #     iter_data['adaptive'] = False
+                # early-mapping: keep capacity & image fidelity
+                if iter < 0.5 * num_iters_mapping:
+                    config['mapping']['prune_gaussians'] = False
+                    iter_data['adaptive'] = True
+                    iter_data['adaptive_k'] = 0.2
+                else:
+                    config['mapping']['prune_gaussians'] = True
                     iter_data['adaptive'] = False
-                    # keep 20 % of hardest pixels
+
 
                 # Loss for current frame
                 
                 loss, variables, losses = get_loss(params, iter_data, variables, iter_time_idx, config['mapping']['loss_weights'],
                                                 config['mapping']['use_sil_for_loss'], config['mapping']['sil_thres'],
-                                                config['mapping']['use_l1'], config['mapping']['ignore_outlier_depth_loss'], mapping=True)
+                                                config['mapping']['use_l1'], config['mapping']['ignore_outlier_depth_loss'], mapping=True,
+                                                do_ba=True)             # <— enable joint Gaussians+camera gradients
                 if config['use_wandb']:
                     # Report Loss
                     wandb_mapping_step = report_loss(losses, wandb_run, wandb_mapping_step, mapping=True)
