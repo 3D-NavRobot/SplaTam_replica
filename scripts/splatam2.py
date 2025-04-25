@@ -489,13 +489,13 @@ def rgbd_slam(config: dict):
 
     config['mapping']['prune_gaussians'] = False
     # === in your experiment config file or at top of rgbd_slam ===
-    config['mapping']['use_gaussian_splatting_densification'] = True
+    # config['mapping']['use_gaussian_splatting_densification'] = True
 
-    # bump up density-growth early
-    config['mapping']['densify_dict'].update({
-        'start_iter': 200,    # default was 1000
-        'ratio':      0.20,   # default was 0.10
-    })
+    # # bump up density-growth early
+    # config['mapping']['densify_dict'].update({
+    #     'start_iter': 200,    # default was 1000
+    #     'ratio':      0.20,   # default was 0.10
+    # })
 
     # Create Output Directories
     output_dir = os.path.join(config["workdir"], config["run_name"])
