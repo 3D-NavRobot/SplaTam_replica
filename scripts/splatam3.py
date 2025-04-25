@@ -34,9 +34,8 @@ from utils.slam_helpers import (
 )
 from utils.slam_external import calc_ssim, build_rotation, prune_gaussians, densify
 
-from diff_gaussian_rasterization import GaussianRasterizer as Renderer
-
-from scripts.feature_tracker import track_pair
+# from diff_gaussian_rasterization import GaussianRasterizer as Renderer
+from fast_gauss import GaussianRasterizer as Renderer
 
 
 def get_dataset(config_dict, basedir, sequence, **kwargs):
@@ -66,67 +65,57 @@ def get_dataset(config_dict, basedir, sequence, **kwargs):
         raise ValueError(f"Unknown dataset name {config_dict['dataset_name']}")
 
 
-# Add at top of file
-_GRID_CACHE = {}
-
 def get_pointcloud(color, depth, intrinsics, w2c, transform_pts=True, 
                    mask=None, compute_mean_sq_dist=False, mean_sq_dist_method="projective"):
-    """
-    – color: (3,H,W) float32
-    – depth: (1,H,W) float32
-    We’ll cache the meshgrid per (H,W,device) so we only build it once.
-    """
-    # ---- new caching logic ----
-    B, H, W = 1, color.shape[1], color.shape[2]
-    cache_key = (H, W, depth.device)
-    if cache_key not in _GRID_CACHE:
-        xs = torch.arange(W, device=depth.device).float()
-        ys = torch.arange(H, device=depth.device).float()
-        _GRID_CACHE[cache_key] = torch.meshgrid(xs, ys, indexing='xy')
-    x_grid, y_grid = _GRID_CACHE[cache_key]
-    # ---------------------------
+    width, height = color.shape[2], color.shape[1]
+    CX = intrinsics[0][2]
+    CY = intrinsics[1][2]
+    FX = intrinsics[0][0]
+    FY = intrinsics[1][1]
 
-    CX = intrinsics[0,2]
-    CY = intrinsics[1,2]
-    FX = intrinsics[0,0]
-    FY = intrinsics[1,1]
-
-    # flatten
-    xx = (x_grid.reshape(-1) - CX)/FX
-    yy = (y_grid.reshape(-1) - CY)/FY
+    # Compute indices of pixels
+    x_grid, y_grid = torch.meshgrid(torch.arange(width).cuda().float(), 
+                                    torch.arange(height).cuda().float(),
+                                    indexing='xy')
+    xx = (x_grid - CX)/FX
+    yy = (y_grid - CY)/FY
+    xx = xx.reshape(-1)
+    yy = yy.reshape(-1)
     depth_z = depth[0].reshape(-1)
 
-    # build cam points
+    # Initialize point cloud
     pts_cam = torch.stack((xx * depth_z, yy * depth_z, depth_z), dim=-1)
-
-    # world pts?
     if transform_pts:
-        ones = torch.ones(H*W,1, device=depth.device)
-        pts4 = torch.cat((pts_cam, ones), dim=1)
+        pix_ones = torch.ones(height * width, 1).cuda().float()
+        pts4 = torch.cat((pts_cam, pix_ones), dim=1)
         c2w = torch.inverse(w2c)
         pts = (c2w @ pts4.T).T[:, :3]
     else:
         pts = pts_cam
 
-    # mean‐sq‐dist
+    # Compute mean squared distance for initializing the scale of the Gaussians
     if compute_mean_sq_dist:
         if mean_sq_dist_method == "projective":
-            scale = depth_z / ((FX+FY)/2)
-            mean3_sq_dist = scale**2
+            # Projective Geometry (this is fast, farther -> larger radius)
+            scale_gaussian = depth_z / ((FX + FY)/2)
+            mean3_sq_dist = scale_gaussian**2
         else:
-            raise ValueError
-
-    # color flatten
-    cols = color.permute(1,2,0).reshape(-1,3)
-
+            raise ValueError(f"Unknown mean_sq_dist_method {mean_sq_dist_method}")
+    
+    # Colorize point cloud
+    cols = torch.permute(color, (1, 2, 0)).reshape(-1, 3) # (C, H, W) -> (H, W, C) -> (H * W, C)
     point_cld = torch.cat((pts, cols), -1)
+
+    # Select points based on mask
     if mask is not None:
         point_cld = point_cld[mask]
         if compute_mean_sq_dist:
             mean3_sq_dist = mean3_sq_dist[mask]
 
-    return (point_cld, mean3_sq_dist) if compute_mean_sq_dist else point_cld
-
+    if compute_mean_sq_dist:
+        return point_cld, mean3_sq_dist
+    else:
+        return point_cld
 
 
 def initialize_params(init_pt_cld, num_frames, mean3_sq_dist, gaussian_distribution):
@@ -224,9 +213,8 @@ def initialize_first_timestep(dataset, num_frames, scene_radius_depth_ratio,
 
 
 def get_loss(params, curr_data, variables, iter_time_idx, loss_weights, use_sil_for_loss,
-             sil_thres, use_l1, ignore_outlier_depth_loss, tracking=False,
-             mapping=False, do_ba=False, plot_dir=None, visualize_tracking_loss=False,
-             tracking_iteration=None):
+             sil_thres, use_l1, ignore_outlier_depth_loss, tracking=False, 
+             mapping=False, do_ba=False, plot_dir=None, visualize_tracking_loss=False, tracking_iteration=None):
     # Initialize Loss Dictionary
     losses = {}
 
@@ -291,15 +279,6 @@ def get_loss(params, curr_data, variables, iter_time_idx, loss_weights, use_sil_
             losses['depth'] = torch.abs(curr_data['depth'] - depth)[mask].sum()
         else:
             losses['depth'] = torch.abs(curr_data['depth'] - depth)[mask].mean()
-
-    # ------------- ADAPTIVE PIXEL SUB‑SAMPLING ----------------
-    # If caller set 'adaptive' we keep only top‑k% highest‑error pixels
-    if curr_data.get('adaptive', False) and mask.sum() > 0:
-        k = curr_data.get('adaptive_k', 0.2)        # default 20 %
-        per_pix_err = torch.abs(curr_data['depth'] - depth)[mask]
-        thresh = torch.quantile(per_pix_err, 1 - k)
-        mask = mask & (torch.abs(curr_data['depth'] - depth) >= thresh)
-    # -----------------------------------------------------------
     
     # RGB Loss
     if tracking and (use_sil_for_loss or ignore_outlier_depth_loss):
@@ -474,7 +453,6 @@ def convert_params_to_store(params):
     return params_to_store
 
 
-
 def rgbd_slam(config: dict):
     # Print Config
     print("Loaded Config:")
@@ -486,12 +464,6 @@ def rgbd_slam(config: dict):
     if "gaussian_distribution" not in config:
         config['gaussian_distribution'] = "isotropic"
     print(f"{config}")
-
-    config['mapping']['num_iters'] = 15000
-    pd = config['mapping']['pruning_dict']
-    pd['soft_prune_ratio'] = 0.6
-    pd['hard_prune_ratio'] = 0.2
-    config['tracking']['num_iters'] = 10
 
     # Create Output Directories
     output_dir = os.path.join(config["workdir"], config["run_name"])
@@ -668,9 +640,6 @@ def rgbd_slam(config: dict):
     else:
         checkpoint_time_idx = 0
     
-    prev_rgb_bgr   = None      # will store H×W×3 uint8
-    prev_depth_cpu = None      # will store H×W float32 (metres)
-
     # Iterate over Scan
     for time_idx in tqdm(range(checkpoint_time_idx, num_frames)):
         # Load RGBD frames incrementally instead of all frames
@@ -706,99 +675,74 @@ def rgbd_slam(config: dict):
             params = initialize_camera_pose(params, time_idx, forward_prop=config['tracking']['forward_prop'])
 
         # Tracking
-        # -------------------- FAST FEATURE BOOTSTRAP --------------------
-
-
         tracking_start_time = time.time()
         if time_idx > 0 and not config['tracking']['use_gt_poses']:
-            # 1) Try feature‐based bootstrap
-            bootstrap_ok = False
-            if prev_rgb_bgr is not None and prev_depth_cpu is not None:
-                pose_feat, ninl = track_pair(
-                    prev_rgb_bgr,
-                    prev_depth_cpu,
-                    (color.permute(1,2,0)*255).byte().cpu().numpy(),
-                    intrinsics.cpu().numpy()
-                )
-                if pose_feat is not None and ninl > 50:
-                    with torch.no_grad():
-                        params['cam_unnorm_rots'][..., time_idx] = \
-                            matrix_to_quaternion(pose_feat[:3,:3][None])
-                        params['cam_trans'][..., time_idx]       = pose_feat[:3,3]
-                    # far fewer Adam steps
-                    num_iters_tracking = max(5, config['tracking']['num_iters']//4)
-                    bootstrap_ok = True
-
-            # 2) Only run the Adam‐fine‐tune if bootstrap failed
-            if not bootstrap_ok:
-                optimizer = initialize_optimizer(params, config['tracking']['lrs'], tracking=True)
-                candidate_cam_unnorm_rot = params['cam_unnorm_rots'][..., time_idx].detach().clone()
-                candidate_cam_tran       = params['cam_trans'][..., time_idx].detach().clone()
-                current_min_loss = float('inf')
-                it = 0
-                pbar = tqdm(range(num_iters_tracking),
-                            desc=f"Tracking Time Step: {time_idx}")
-                while True:
-                    iter_start = time.time()
-                    
-                    loss, variables, losses = get_loss(
-                        params, tracking_curr_data, variables,
-                        time_idx,
-                        config['tracking']['loss_weights'],
-                        config['tracking']['use_sil_for_loss'],
-                        config['tracking']['sil_thres'],
-                        config['tracking']['use_l1'],
-                        config['tracking']['ignore_outlier_depth_loss'],
-                        tracking=True,
-                        plot_dir=eval_dir,
-                        visualize_tracking_loss=config['tracking']['visualize_tracking_loss'],
-                        tracking_iteration=it
-                    )
-
-                    if config['use_wandb']:
-                        wandb_tracking_step = report_loss(losses, wandb_run,
-                                                          wandb_tracking_step,
-                                                          tracking=True)
-
-                    # backward + step
-                    # Backprop
-                    loss.backward()
-                    # Optimizer Update
-                    optimizer.step()
-                    optimizer.zero_grad(set_to_none=True)
-
-                    # keep best
-                    with torch.no_grad():
-                        if loss < current_min_loss:
-                            current_min_loss = loss
-                            candidate_cam_unnorm_rot = params['cam_unnorm_rots'][..., time_idx].detach().clone()
-                            candidate_cam_tran       = params['cam_trans'][..., time_idx].detach().clone()
-
-                        if config['report_iter_progress']:
-                            report_progress(params, tracking_curr_data, it+1, pbar,
-                                            time_idx,
-                                            sil_thres=config['tracking']['sil_thres'],
-                                            tracking=True,
-                                            wandb_run=wandb_run if config['use_wandb'] else None,
-                                            wandb_step=wandb_tracking_step if config['use_wandb'] else None,
-                                            wandb_save_qual=config['wandb']['save_qual'] if config['use_wandb'] else None)
+            # Reset Optimizer & Learning Rates for tracking
+            optimizer = initialize_optimizer(params, config['tracking']['lrs'], tracking=True)
+            # Keep Track of Best Candidate Rotation & Translation
+            candidate_cam_unnorm_rot = params['cam_unnorm_rots'][..., time_idx].detach().clone()
+            candidate_cam_tran = params['cam_trans'][..., time_idx].detach().clone()
+            current_min_loss = float(1e20)
+            # Tracking Optimization
+            iter = 0
+            do_continue_slam = False
+            num_iters_tracking = config['tracking']['num_iters']
+            progress_bar = tqdm(range(num_iters_tracking), desc=f"Tracking Time Step: {time_idx}")
+            while True:
+                iter_start_time = time.time()
+                # Loss for current frame
+                loss, variables, losses = get_loss(params, tracking_curr_data, variables, iter_time_idx, config['tracking']['loss_weights'],
+                                                   config['tracking']['use_sil_for_loss'], config['tracking']['sil_thres'],
+                                                   config['tracking']['use_l1'], config['tracking']['ignore_outlier_depth_loss'], tracking=True, 
+                                                   plot_dir=eval_dir, visualize_tracking_loss=config['tracking']['visualize_tracking_loss'],
+                                                   tracking_iteration=iter)
+                if config['use_wandb']:
+                    # Report Loss
+                    wandb_tracking_step = report_loss(losses, wandb_run, wandb_tracking_step, tracking=True)
+                # Backprop
+                loss.backward()
+                # Optimizer Update
+                optimizer.step()
+                optimizer.zero_grad(set_to_none=True)
+                with torch.no_grad():
+                    # Save the best candidate rotation & translation
+                    if loss < current_min_loss:
+                        current_min_loss = loss
+                        candidate_cam_unnorm_rot = params['cam_unnorm_rots'][..., time_idx].detach().clone()
+                        candidate_cam_tran = params['cam_trans'][..., time_idx].detach().clone()
+                    # Report Progress
+                    if config['report_iter_progress']:
+                        if config['use_wandb']:
+                            report_progress(params, tracking_curr_data, iter+1, progress_bar, iter_time_idx, sil_thres=config['tracking']['sil_thres'], tracking=True,
+                                            wandb_run=wandb_run, wandb_step=wandb_tracking_step, wandb_save_qual=config['wandb']['save_qual'])
                         else:
-                            pbar.update(1)
-
-                    tracking_iter_time_sum  += time.time() - iter_start
-                    tracking_iter_time_count += 1
-                    it += 1
-
-                    if it == num_iters_tracking:
+                            report_progress(params, tracking_curr_data, iter+1, progress_bar, iter_time_idx, sil_thres=config['tracking']['sil_thres'], tracking=True)
+                    else:
+                        progress_bar.update(1)
+                # Update the runtime numbers
+                iter_end_time = time.time()
+                tracking_iter_time_sum += iter_end_time - iter_start_time
+                tracking_iter_time_count += 1
+                # Check if we should stop tracking
+                iter += 1
+                if iter == num_iters_tracking:
+                    if losses['depth'] < config['tracking']['depth_loss_thres'] and config['tracking']['use_depth_loss_thres']:
+                        break
+                    elif config['tracking']['use_depth_loss_thres'] and not do_continue_slam:
+                        do_continue_slam = True
+                        progress_bar = tqdm(range(num_iters_tracking), desc=f"Tracking Time Step: {time_idx}")
+                        num_iters_tracking = 2*num_iters_tracking
+                        if config['use_wandb']:
+                            wandb_run.log({"Tracking/Extra Tracking Iters Frames": time_idx,
+                                        "Tracking/step": wandb_time_step})
+                    else:
                         break
 
-                pbar.close()
-                # restore best
-                with torch.no_grad():
-                    params['cam_unnorm_rots'][..., time_idx] = candidate_cam_unnorm_rot
-                    params['cam_trans'][..., time_idx]       = candidate_cam_tran
-
-        
+            progress_bar.close()
+            # Copy over the best candidate rotation & translation
+            with torch.no_grad():
+                params['cam_unnorm_rots'][..., time_idx] = candidate_cam_unnorm_rot
+                params['cam_trans'][..., time_idx] = candidate_cam_tran
         elif time_idx > 0 and config['tracking']['use_gt_poses']:
             with torch.no_grad():
                 # Get the ground truth pose relative to frame 0
@@ -900,12 +844,7 @@ def rgbd_slam(config: dict):
                 iter_gt_w2c = gt_w2c_all_frames[:iter_time_idx+1]
                 iter_data = {'cam': cam, 'im': iter_color, 'depth': iter_depth, 'id': iter_time_idx, 
                              'intrinsics': intrinsics, 'w2c': first_frame_w2c, 'iter_gt_w2c_list': iter_gt_w2c}
-                
-                iter_data['adaptive']   = True
-                iter_data['adaptive_k'] = 0.2          # keep 20 % of hardest pixels
-
                 # Loss for current frame
-                
                 loss, variables, losses = get_loss(params, iter_data, variables, iter_time_idx, config['mapping']['loss_weights'],
                                                 config['mapping']['use_sil_for_loss'], config['mapping']['sil_thres'],
                                                 config['mapping']['use_l1'], config['mapping']['ignore_outlier_depth_loss'], mapping=True)
@@ -914,7 +853,6 @@ def rgbd_slam(config: dict):
                     wandb_mapping_step = report_loss(losses, wandb_run, wandb_mapping_step, mapping=True)
                 # Backprop
                 loss.backward()
-                
                 with torch.no_grad():
                     # Prune Gaussians
                     if config['mapping']['prune_gaussians']:
@@ -996,11 +934,6 @@ def rgbd_slam(config: dict):
         # Increment WandB Time Step
         if config['use_wandb']:
             wandb_time_step += 1
-
-        # Cache the current frame for next time:
-        prev_rgb_bgr   = (color.permute(1,2,0)*255).byte().cpu().numpy()
-        prev_depth_cpu = depth[0].cpu().numpy()
-
 
         torch.cuda.empty_cache()
 
