@@ -496,6 +496,8 @@ def rgbd_slam(config: dict):
     #     'start_iter': 200,    # default was 1000
     #     'ratio':      0.20,   # default was 0.10
     # })
+    # config["mapping"]["num_iters"] = 5000   # up from, say, 2000
+    # config["mapping_window_size"] = 8       # up from 4 or 5
 
     # Create Output Directories
     output_dir = os.path.join(config["workdir"], config["run_name"])
@@ -724,7 +726,9 @@ def rgbd_slam(config: dict):
                     (color.permute(1,2,0)*255).byte().cpu().numpy(),
                     intrinsics.cpu().numpy()
                 )
-                if pose_feat is not None and ninl > 20:
+                print("========> ninl", ninl)
+                if pose_feat is not None and ninl > 600:
+                    
                     with torch.no_grad():
                         params['cam_unnorm_rots'][..., time_idx] = \
                             matrix_to_quaternion(pose_feat[:3,:3][None])
