@@ -714,7 +714,7 @@ def rgbd_slam(config: dict):
                     (color.permute(1,2,0)*255).byte().cpu().numpy(),
                     intrinsics.cpu().numpy()
                 )
-                if pose_feat is not None and ninl > 1024:
+                if pose_feat is not None and ninl > 50:
                     with torch.no_grad():
                         params['cam_unnorm_rots'][..., time_idx] = \
                             matrix_to_quaternion(pose_feat[:3,:3][None])
