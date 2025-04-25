@@ -487,7 +487,7 @@ def rgbd_slam(config: dict):
         config['gaussian_distribution'] = "isotropic"
     print(f"{config}")
 
-    config['mapping']['prune_gaussians'] = False
+    # config['mapping']['prune_gaussians'] = False
     # === in your experiment config file or at top of rgbd_slam ===
     # config['mapping']['use_gaussian_splatting_densification'] = True
 
