@@ -487,6 +487,9 @@ def rgbd_slam(config: dict):
         config['gaussian_distribution'] = "isotropic"
     print(f"{config}")
 
+    config['mapping']['prune_gaussians'] = False
+    config['mapping']['use_gaussian_splatting_densification'] = True
+
     # Create Output Directories
     output_dir = os.path.join(config["workdir"], config["run_name"])
     eval_dir = os.path.join(output_dir, "eval")
