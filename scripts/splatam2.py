@@ -294,11 +294,11 @@ def get_loss(params, curr_data, variables, iter_time_idx, loss_weights, use_sil_
 
     # ------------- ADAPTIVE PIXEL SUB‑SAMPLING ----------------
     # If caller set 'adaptive' we keep only top‑k% highest‑error pixels
-    if curr_data.get('adaptive', False) and mask.sum() > 0:
-        k = curr_data.get('adaptive_k', 0.2)        # default 20 %
-        per_pix_err = torch.abs(curr_data['depth'] - depth)[mask]
-        thresh = torch.quantile(per_pix_err, 1 - k)
-        mask = mask & (torch.abs(curr_data['depth'] - depth) >= thresh)
+    # if curr_data.get('adaptive', False) and mask.sum() > 0:
+    #     k = curr_data.get('adaptive_k', 0.2)        # default 20 %
+    #     per_pix_err = torch.abs(curr_data['depth'] - depth)[mask]
+    #     thresh = torch.quantile(per_pix_err, 1 - k)
+    #     mask = mask & (torch.abs(curr_data['depth'] - depth) >= thresh)
     # -----------------------------------------------------------
     
     # RGB Loss
@@ -488,6 +488,14 @@ def rgbd_slam(config: dict):
     print(f"{config}")
 
     config['mapping']['prune_gaussians'] = False
+    # === in your experiment config file or at top of rgbd_slam ===
+    config['mapping']['use_gaussian_splatting_densification'] = True
+
+    # bump up density-growth early
+    config['mapping']['densify_dict'].update({
+        'start_iter': 200,    # default was 1000
+        'ratio':      0.20,   # default was 0.10
+    })
 
     # Create Output Directories
     output_dir = os.path.join(config["workdir"], config["run_name"])
@@ -716,7 +724,7 @@ def rgbd_slam(config: dict):
                     (color.permute(1,2,0)*255).byte().cpu().numpy(),
                     intrinsics.cpu().numpy()
                 )
-                if pose_feat is not None and ninl > 50:
+                if pose_feat is not None and ninl > 20:
                     with torch.no_grad():
                         params['cam_unnorm_rots'][..., time_idx] = \
                             matrix_to_quaternion(pose_feat[:3,:3][None])
@@ -780,7 +788,7 @@ def rgbd_slam(config: dict):
                                             wandb_step=wandb_tracking_step if config['use_wandb'] else None,
                                             wandb_save_qual=config['wandb']['save_qual'] if config['use_wandb'] else None)
                         else:
-                            pbar.update(1)
+                            pbar.update(1) 
 
                     tracking_iter_time_sum  += time.time() - iter_start
                     tracking_iter_time_count += 1
@@ -904,10 +912,10 @@ def rgbd_slam(config: dict):
                 # if iter > 0.75 * num_iters_mapping:
                 #     iter_data['adaptive'] = False
                 # early-mapping: keep capacity & image fidelity
-                if iter < 0.5 * num_iters_mapping:
+                if iter < 0.75 * num_iters_mapping:     # wait longer before pruning
                     config['mapping']['prune_gaussians'] = False
-                    iter_data['adaptive'] = True
-                    iter_data['adaptive_k'] = 0.2
+                    # # disable any adaptive subsampling as well
+                    iter_data['adaptive'] = False
                 else:
                     config['mapping']['prune_gaussians'] = True
                     iter_data['adaptive'] = False
