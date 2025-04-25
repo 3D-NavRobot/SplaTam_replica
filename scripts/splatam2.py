@@ -487,18 +487,6 @@ def rgbd_slam(config: dict):
         config['gaussian_distribution'] = "isotropic"
     print(f"{config}")
 
-    # config['mapping']['prune_gaussians'] = False
-    # === in your experiment config file or at top of rgbd_slam ===
-    # config['mapping']['use_gaussian_splatting_densification'] = True
-
-    # # bump up density-growth early
-    # config['mapping']['densify_dict'].update({
-    #     'start_iter': 200,    # default was 1000
-    #     'ratio':      0.20,   # default was 0.10
-    # })
-    # config["mapping"]["num_iters"] = 5000   # up from, say, 2000
-    # config["mapping_window_size"] = 8       # up from 4 or 5
-
     # Create Output Directories
     output_dir = os.path.join(config["workdir"], config["run_name"])
     eval_dir = os.path.join(output_dir, "eval")
@@ -719,7 +707,6 @@ def rgbd_slam(config: dict):
         if time_idx > 0 and not config['tracking']['use_gt_poses']:
             # 1) Try feature‐based bootstrap
             bootstrap_ok = False
-            num_iters_tracking = max(20, config['tracking']['num_iters']//1)
             if prev_rgb_bgr is not None and prev_depth_cpu is not None:
                 pose_feat, ninl = track_pair(
                     prev_rgb_bgr,
@@ -727,24 +714,17 @@ def rgbd_slam(config: dict):
                     (color.permute(1,2,0)*255).byte().cpu().numpy(),
                     intrinsics.cpu().numpy()
                 )
-                print("========> ninl", ninl)
                 if pose_feat is not None and ninl > 1024:
-                    
                     with torch.no_grad():
                         params['cam_unnorm_rots'][..., time_idx] = \
                             matrix_to_quaternion(pose_feat[:3,:3][None])
                         params['cam_trans'][..., time_idx]       = pose_feat[:3,3]
                     # far fewer Adam steps
-                    # num_iters_tracking = max(20, config['tracking']['num_iters']//1)
+                    num_iters_tracking = max(20, config['tracking']['num_iters']//1)
                     bootstrap_ok = True
 
             # 2) Only run the Adam‐fine‐tune if bootstrap failed
-            iter_start = time.time()
-            if bootstrap_ok:
-                # just count the bootstrap as one “iteration”
-                tracking_iter_time_sum  += time.time() - iter_start
-                tracking_iter_time_count += 1
-            else:
+            if not bootstrap_ok:
                 optimizer = initialize_optimizer(params, config['tracking']['lrs'], tracking=True)
                 candidate_cam_unnorm_rot = params['cam_unnorm_rots'][..., time_idx].detach().clone()
                 candidate_cam_tran       = params['cam_trans'][..., time_idx].detach().clone()
@@ -752,9 +732,8 @@ def rgbd_slam(config: dict):
                 it = 0
                 pbar = tqdm(range(num_iters_tracking),
                             desc=f"Tracking Time Step: {time_idx}")
-                # while True:
-                while it < num_iters_tracking:
-                    # iter_start = time.time()
+                while True:
+                    iter_start = time.time()
                     
                     loss, variables, losses = get_loss(
                         params, tracking_curr_data, variables,
@@ -781,15 +760,6 @@ def rgbd_slam(config: dict):
                     # Optimizer Update
                     optimizer.step()
                     optimizer.zero_grad(set_to_none=True)
-                    
-
-                    # this is where you _did_ measure…
-                    tracking_iter_time_sum  += time.time() - iter_start
-                    tracking_iter_time_count += 1
-                    it += 1
-
-                    if it == num_iters_tracking:
-                        break
 
                     # keep best
                     with torch.no_grad():
@@ -807,12 +777,14 @@ def rgbd_slam(config: dict):
                                             wandb_step=wandb_tracking_step if config['use_wandb'] else None,
                                             wandb_save_qual=config['wandb']['save_qual'] if config['use_wandb'] else None)
                         else:
-                            pbar.update(1) 
+                            pbar.update(1)
 
-                    # tracking_iter_time_sum  += time.time() - iter_start
-                    # tracking_iter_time_count += 1
-                    # it += 1
+                    tracking_iter_time_sum  += time.time() - iter_start
+                    tracking_iter_time_count += 1
+                    it += 1
 
+                    if it == num_iters_tracking:
+                        break
 
                 pbar.close()
                 # restore best
@@ -928,7 +900,7 @@ def rgbd_slam(config: dict):
                 
                 if iter > 0.75 * num_iters_mapping:
                     iter_data['adaptive'] = False
-
+                    # keep 20 % of hardest pixels
 
                 # Loss for current frame
                 
