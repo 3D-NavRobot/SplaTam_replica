@@ -719,6 +719,7 @@ def rgbd_slam(config: dict):
         if time_idx > 0 and not config['tracking']['use_gt_poses']:
             # 1) Try feature‐based bootstrap
             bootstrap_ok = False
+            num_iters_tracking = max(20, config['tracking']['num_iters']//1)
             if prev_rgb_bgr is not None and prev_depth_cpu is not None:
                 pose_feat, ninl = track_pair(
                     prev_rgb_bgr,
@@ -734,7 +735,7 @@ def rgbd_slam(config: dict):
                             matrix_to_quaternion(pose_feat[:3,:3][None])
                         params['cam_trans'][..., time_idx]       = pose_feat[:3,3]
                     # far fewer Adam steps
-                    num_iters_tracking = max(20, config['tracking']['num_iters']//1)
+                    # num_iters_tracking = max(20, config['tracking']['num_iters']//1)
                     bootstrap_ok = True
 
             # 2) Only run the Adam‐fine‐tune if bootstrap failed
